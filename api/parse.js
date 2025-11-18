@@ -19,7 +19,6 @@ export default async function handler(req, res) {
 
     let url, headers, payload;
 
-    // ----- OPENAI MODE -----
     if (OPENAI) {
       url = "https://api.openai.com/v1/responses";
       headers = {
@@ -32,9 +31,7 @@ export default async function handler(req, res) {
         temperature: 0,
         max_output_tokens: 600
       };
-    }
-    // ----- GEMINI MODE -----
-    else {
+    } else {
       url = "https://api.google.com/v1/responses";
       headers = {
         "Content-Type": "application/json",
@@ -65,7 +62,6 @@ export default async function handler(req, res) {
       });
     }
 
-    // Try return JSON
     try {
       const json = JSON.parse(text);
       return res.status(200).json(json);
