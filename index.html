@@ -1,0 +1,1038 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Group Expense Tracker</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Firebase SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+    
+    <!-- Gemini SDK Import (Module) -->
+    <script type="module">
+        import { GoogleGenAI } from "https://esm.run/@google/genai";
+        // Assign the imported class to the window object so the non-module script can access it
+        window.GoogleGenAI = GoogleGenAI; 
+    </script>
+
+    <!-- Tailwind Configuration and Custom Styles -->
+    <style>
+        :root {
+            --bg-color: #1a202c; /* Dark Slate Gray */
+            --surface-color: #2d3748; /* Darker Surface */
+            --primary-color: #48bb78; /* Green Accent */
+            --error-color: #f56565; /* Red */
+        }
+        body {
+            background-color: var(--bg-color);
+        }
+        /* Custom scrollbar for transaction history */
+        #transaction-history::-webkit-scrollbar {
+            width: 8px;
+        }
+        #transaction-history::-webkit-scrollbar-thumb {
+            background-color: #48bb7850; /* Primary color with transparency */
+            border-radius: 4px;
+        }
+        #transaction-history::-webkit-scrollbar-track {
+            background-color: var(--bg-color);
+        }
+    </style>
+    <script>
+        tailwind.config = {
+            darkMode: 'class', // Default to dark theme
+            theme: {
+                extend: {
+                    colors: {
+                        'bg-dark': 'var(--bg-color)',
+                        'surface': 'var(--surface-color)',
+                        'primary': 'var(--primary-color)',
+                        'error': 'var(--error-color)',
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="min-h-screen bg-bg-dark text-white font-[Inter]">
+
+    <!-- Auth Modals (Sign In/Sign Up) -->
+    <div id="auth-modal" class="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
+        <div class="bg-surface p-8 rounded-xl shadow-2xl w-full max-w-sm border border-gray-700">
+            <h2 id="auth-title" class="text-3xl font-extrabold mb-6 text-center text-primary">Sign In</h2>
+            <form id="auth-form" class="space-y-4">
+                <input type="email" id="auth-email" placeholder="Email (admin@expense.com for admin)" required class="w-full p-3 rounded-lg bg-bg-dark border border-gray-600 focus:ring-primary focus:border-primary">
+                <input type="password" id="auth-password" placeholder="Password" required class="w-full p-3 rounded-lg bg-bg-dark border border-gray-600 focus:ring-primary focus:border-primary">
+                <button type="submit" class="w-full py-3 bg-primary text-bg-dark font-bold rounded-lg shadow-lg hover:bg-green-400 transition duration-200">
+                    Submit
+                </button>
+            </form>
+            <button id="toggle-auth" class="w-full mt-4 text-sm text-center text-gray-400 hover:text-primary transition">
+                Need an account? Sign Up
+            </button>
+            <p id="auth-error" class="text-error text-center mt-3 hidden"></p>
+        </div>
+    </div>
+
+    <!-- Pending User Modal -->
+    <div id="pending-modal" class="fixed inset-0 bg-black bg-opacity-90 flex items-center justify-center z-50 hidden">
+        <div class="bg-surface p-10 rounded-xl shadow-2xl w-full max-w-lg text-center border border-yellow-500">
+            <svg class="w-16 h-16 mx-auto mb-4 text-yellow-400 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.39 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+            <h2 class="text-3xl font-extrabold mb-4 text-yellow-400">Account Pending Approval</h2>
+            <p class="text-gray-300 mb-6">Your account is currently awaiting administrator approval. Please wait or sign out.</p>
+            <button id="sign-out-pending" class="py-2 px-4 bg-error text-white font-bold rounded-lg shadow-md hover:bg-red-600 transition duration-200">Sign Out</button>
+        </div>
+    </div>
+
+    <!-- Debt Detail Modal -->
+    <div id="debt-modal" class="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 hidden">
+        <div class="bg-surface p-6 rounded-xl shadow-2xl w-full max-w-md border border-gray-700">
+            <div class="flex justify-between items-center mb-4 border-b pb-2 border-bg-dark">
+                <h3 id="debt-modal-title" class="text-2xl font-extrabold text-primary">Debt Details</h3>
+                <button id="close-debt-modal" class="text-gray-400 hover:text-white transition">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+            </div>
+            <div id="debt-modal-content" class="space-y-3">
+                <!-- Detailed payments will be injected here -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Application Container -->
+    <div id="app-container" class="min-h-screen hidden">
+        <div class="grid grid-cols-1 lg:grid-cols-4 gap-0">
+            
+            <!-- Left Panel: Transaction History & Input (Main Chat View) -->
+            <div class="lg:col-span-3 flex flex-col h-screen p-6 bg-bg-dark border-r border-gray-700">
+                <header class="flex justify-between items-center pb-4 mb-4 border-b border-surface">
+                    <h1 class="text-4xl font-extrabold text-primary flex items-center">
+                        <svg class="w-8 h-8 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z"></path></svg>
+                        Split AI
+                    </h1>
+                    <div class="flex items-center space-x-3">
+                         <button id="export-csv-btn" class="flex items-center px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-500 transition duration-200 text-sm font-medium">
+                            <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2-8H4a2 2 0 00-2 2v10a2 2 0 002 2h16a2 2 0 002-2V6a2 2 0 00-2-2z"></path></svg>
+                            Export
+                        </button>
+                        <button id="sign-out-btn" class="px-4 py-2 bg-error text-white rounded-lg font-medium hover:bg-red-600 transition duration-200 text-sm">Sign Out</button>
+                    </div>
+                </header>
+
+                <!-- Transaction History -->
+                <div id="transaction-history" class="flex-grow overflow-y-auto space-y-6 pb-4">
+                    <!-- Transactions will be injected here -->
+                    <div class="text-center text-gray-500 py-10">Start by submitting an expense! (e.g., "Jane paid 88 for everyone")</div>
+                </div>
+
+                <!-- Expense Input Area -->
+                <div class="pt-4 border-t border-surface">
+                    <p class="text-sm mb-2 text-gray-400">
+                        Logged in as: <span id="current-user-info" class="font-semibold text-primary">...</span>
+                    </p>
+                    <form id="expense-form" class="flex space-x-3">
+                        <input type="text" id="expense-input" placeholder="e.g., 'Alice paid $50 for dinner with Bob and Charlie'" required 
+                               class="flex-grow p-4 rounded-xl bg-surface border border-gray-600 focus:ring-primary focus:border-primary placeholder-gray-500 text-white disabled:opacity-50"
+                               disabled>
+                        <button type="submit" id="submit-expense-btn" 
+                                class="px-6 py-4 bg-primary text-bg-dark font-bold rounded-xl shadow-lg hover:bg-green-400 transition duration-200 disabled:opacity-50"
+                                disabled>
+                            Send
+                        </button>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Right Panel: Summary & Admin -->
+            <div class="lg:col-span-1 flex flex-col h-screen p-6 bg-surface overflow-y-auto border-l border-gray-700">
+                
+                <!-- Current Balances -->
+                <section class="mb-8">
+                    <h2 class="text-2xl font-extrabold mb-4 border-b pb-2 border-bg-dark text-white">Current Balances</h2>
+                    <div id="balances-summary" class="space-y-2">
+                        <!-- Balances will be injected here -->
+                        <p class="text-gray-400 text-sm">Loading balances...</p>
+                    </div>
+                </section>
+                
+                <!-- Admin Panel (Visible only to Admin) -->
+                <section id="admin-panel" class="hidden mt-6 pt-4 border-t border-bg-dark">
+                    <h2 class="text-2xl font-extrabold mb-3 text-error">Admin Controls</h2>
+                    <h3 class="text-xl font-semibold mb-3 text-white">Pending Members</h3>
+                    <div id="pending-members-list" class="space-y-3">
+                        <!-- Pending users will be injected here -->
+                        <p class="text-gray-400 text-sm">No pending members.</p>
+                    </div>
+                </section>
+            </div>
+        </div>
+    </div>
+
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            // --- GLOBAL CONFIGURATION ---
+            // These global variables are expected to be provided by the canvas environment
+            const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+            const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : { /* default config */ };
+            const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+            
+            // IMPORTANT: Replace this with your actual Gemini API Key
+            const GEMINI_API_KEY = "AIzaSyAauUaFLrF6xBxgPnm5OiPrBlSkCJSHmrQ"; 
+            const GEMINI_MODEL = "gemini-2.5-flash-preview-09-2025";
+            const ADMIN_EMAIL = "admin@expense.com";
+
+            // Initialize Firebase
+            firebase.initializeApp(firebaseConfig);
+            const auth = firebase.auth();
+            const db = firebase.firestore();
+            
+            // Log Firestore events for debugging
+            firebase.firestore.setLogLevel('debug'); 
+
+            let geminiAI;
+
+            // Check if the GoogleGenAI class was successfully attached to the window object by the module script
+            if (window.GoogleGenAI) {
+                // Initialize Gemini AI client
+                geminiAI = new window.GoogleGenAI({ apiKey: GEMINI_API_KEY });
+            } else {
+                // Fallback / Error check, though the DOMContentLoaded should ensure it's loaded
+                console.error("Gemini SDK not loaded. Cannot initialize AI client.");
+            }
+
+
+            // --- STATE VARIABLES ---
+            let currentUser = null;
+            let userData = null; // Stores user profile data (role, status, name)
+            let groupMembers = {}; // Key-value map: {uid: {name, status, email}} - ONLY APPROVED MEMBERS
+            let allTransactions = []; // Stores all transactions for display/calculation
+            let currentBalances = {}; // Stores the net balance for each member
+            let allMembersArray = []; // Array of all approved member UIDs for debt calc
+
+
+            // --- UI ELEMENTS ---
+            const ui = {
+                authModal: document.getElementById('auth-modal'),
+                pendingModal: document.getElementById('pending-modal'),
+                appContainer: document.getElementById('app-container'),
+                authForm: document.getElementById('auth-form'),
+                authEmail: document.getElementById('auth-email'),
+                authPassword: document.getElementById('auth-password'),
+                authTitle: document.getElementById('auth-title'),
+                authError: document.getElementById('auth-error'),
+                authToggle: document.getElementById('toggle-auth'),
+                expenseForm: document.getElementById('expense-form'),
+                expenseInput: document.getElementById('expense-input'),
+                submitExpenseBtn: document.getElementById('submit-expense-btn'),
+                history: document.getElementById('transaction-history'),
+                balancesSummary: document.getElementById('balances-summary'),
+                adminPanel: document.getElementById('admin-panel'),
+                pendingMembersList: document.getElementById('pending-members-list'),
+                currentUserInfo: document.getElementById('current-user-info'),
+                debtModal: document.getElementById('debt-modal'),
+                debtModalTitle: document.getElementById('debt-modal-title'),
+                debtModalContent: document.getElementById('debt-modal-content'),
+            };
+
+            let isSignIn = true;
+
+
+            // --- DATA MODEL & HELPERS ---
+
+            /**
+             * Converts member UIDs in a transaction split to names.
+             * @param {string[]} recipientUids - Array of UIDs.
+             * @returns {string[]} Array of member names.
+             */
+            function uidsToNames(recipientUids) {
+                return recipientUids.map(uid => groupMembers[uid]?.name || 'Unknown User');
+            }
+
+            /**
+             * Formats a number as a currency string.
+             * @param {number} amount
+             * @returns {string} Formatted currency.
+             */
+            function formatCurrency(amount) {
+                return new Intl.NumberFormat('en-US', {
+                    style: 'currency',
+                    currency: 'USD',
+                    minimumFractionDigits: 2,
+                }).format(amount);
+            }
+
+            /**
+             * Clears all session data and redirects to sign-in.
+             */
+            function handleSignOut() {
+                auth.signOut().then(() => {
+                    // Clear state
+                    currentUser = null;
+                    userData = null;
+                    groupMembers = {};
+                    allTransactions = [];
+                    currentBalances = {};
+                    
+                    // Reset UI
+                    ui.appContainer.classList.add('hidden');
+                    ui.pendingModal.classList.add('hidden');
+                    ui.authModal.classList.remove('hidden');
+                    ui.history.innerHTML = '<div class="text-center text-gray-500 py-10">Start by submitting an expense! (e.g., "Alice paid $50 for everyone")</div>';
+                }).catch((error) => {
+                    console.error("Sign Out Error:", error);
+                });
+            }
+
+
+            // --- AUTHENTICATION & UI FLOW ---
+
+            /**
+             * Handles the authentication state change.
+             * @param {firebase.User} user
+             */
+            auth.onAuthStateChanged(async (user) => {
+                if (user) {
+                    currentUser = user;
+                    ui.authModal.classList.add('hidden');
+
+                    // Initial sign in or subsequent load
+                    if (initialAuthToken && !auth.currentUser) {
+                        try {
+                            await auth.signInWithCustomToken(initialAuthToken);
+                            console.log("Signed in with custom token.");
+                        } catch (error) {
+                            console.error("Custom token sign-in failed:", error);
+                            // Fallback or error handling
+                        }
+                    } else if (!auth.currentUser) {
+                        try {
+                            await auth.signInAnonymously();
+                            console.log("Signed in anonymously.");
+                        } catch (error) {
+                            console.error("Anonymous sign-in failed:", error);
+                        }
+                    }
+
+                    // Check/Create User Profile and set up listeners
+                    await ensureUserProfile(user);
+                    
+                } else {
+                    currentUser = null;
+                    ui.appContainer.classList.add('hidden');
+                    ui.pendingModal.classList.add('hidden');
+                    ui.authModal.classList.remove('hidden');
+                }
+            });
+
+            /**
+             * Ensures the user has a profile in the 'users' collection and sets initial state.
+             * @param {firebase.User} user
+             */
+            async function ensureUserProfile(user) {
+                // Path: /artifacts/{appId}/users/{userId}/profiles
+                const userRef = db.collection(`artifacts/${appId}/users/${user.uid}/profiles`).doc('current');
+                const doc = await userRef.get();
+
+                if (!doc.exists) {
+                    // Initial creation upon sign-up
+                    const is_admin = user.email === ADMIN_EMAIL;
+                    const initial_status = is_admin ? 'approved' : 'pending';
+                    const name = user.email ? user.email.split('@')[0] : 'Anonymous'; // Simple name extraction
+
+                    await userRef.set({
+                        email: user.email || 'anonymous',
+                        name: name.charAt(0).toUpperCase() + name.slice(1), // Capitalize
+                        role: is_admin ? 'admin' : 'member',
+                        status: initial_status,
+                        createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                    });
+
+                    // If admin, immediately add to group_members collection
+                     if (is_admin) {
+                         await db.collection(`artifacts/${appId}/public/data/group_members`).doc(user.uid).set({
+                            name: name.charAt(0).toUpperCase() + name.slice(1),
+                            email: user.email,
+                            role: 'admin',
+                            joinedAt: firebase.firestore.FieldValue.serverTimestamp()
+                        });
+                    }
+                }
+                
+                // Listen for profile changes (especially status)
+                userRef.onSnapshot(doc => {
+                    if (doc.exists) {
+                        userData = doc.data();
+                        renderApplicationState();
+                    } else {
+                        console.error("User profile document not found. Signing out.");
+                        handleSignOut();
+                    }
+                });
+            }
+
+            /**
+             * Renders the main application based on the user's approval status.
+             */
+            function renderApplicationState() {
+                if (!userData || !currentUser) return;
+
+                ui.currentUserInfo.textContent = `${userData.name} (Role: ${userData.role}, Status: ${userData.status})`;
+
+                if (userData.status === 'approved') {
+                    ui.appContainer.classList.remove('hidden');
+                    ui.pendingModal.classList.add('hidden');
+                    ui.expenseInput.disabled = false;
+                    ui.submitExpenseBtn.disabled = false;
+                    
+                    // Admin panel visibility
+                    if (userData.role === 'admin') {
+                        ui.adminPanel.classList.remove('hidden');
+                    } else {
+                        ui.adminPanel.classList.add('hidden');
+                    }
+                    
+                    // Start real-time listeners for group data and transactions
+                    setupRealTimeListeners();
+
+                } else { // status: 'pending' or other
+                    ui.appContainer.classList.add('hidden');
+                    ui.pendingModal.classList.remove('hidden');
+                    ui.expenseInput.disabled = true;
+                    ui.submitExpenseBtn.disabled = true;
+                }
+            }
+
+
+            // --- REAL-TIME LISTENERS (FIRESTORE) ---
+
+            function setupRealTimeListeners() {
+                // Path: /artifacts/{appId}/public/data/group_members
+                const groupMembersRef = db.collection(`artifacts/${appId}/public/data/group_members`);
+
+                // 1. Group Members Listener (Approved Users)
+                groupMembersRef.onSnapshot(snapshot => {
+                    groupMembers = {};
+                    allMembersArray = [];
+                    snapshot.forEach(doc => {
+                        const member = doc.data();
+                        groupMembers[doc.id] = {...member, uid: doc.id};
+                        allMembersArray.push(doc.id); // For easy iteration in calc
+                    });
+                    // Recalculate balances and redraw summary
+                    calculateAndRenderBalances();
+                }, error => console.error("Group Members Listener Error:", error));
+
+                // 2. All Users Listener (For Admin Panel) - Reading all profiles from all users
+                if (userData.role === 'admin') {
+                     // Note: Since profiles are stored per user, we need a collection group query or specific structure to fetch all.
+                     // For simplicity here, we'll try to listen to all user subcollections if rules allow, or just the current admin's known public data.
+                     // The Admin can read all user profiles, which are stored under their own UID: /artifacts/{appId}/users/{userId}/profiles/current
+                    db.collectionGroup('profiles').onSnapshot(snapshot => {
+                        renderPendingUsers(snapshot.docs.map(doc => ({...doc.data(), uid: doc.ref.parent.parent.id})));
+                    }, error => console.error("Admin Users Listener Error (Collection Group might need index):", error));
+                }
+
+                // Path: /artifacts/{appId}/public/data/transactions
+                const transactionsRef = db.collection(`artifacts/${appId}/public/data/transactions`);
+
+                // 3. Transactions Listener
+                transactionsRef.orderBy('timestamp', 'asc').onSnapshot(snapshot => {
+                    allTransactions = snapshot.docs.map(doc => ({...doc.data(), id: doc.id}));
+                    renderTransactionHistory();
+                    calculateAndRenderBalances();
+                }, error => console.error("Transactions Listener Error:", error));
+            }
+
+
+            // --- ADMIN PANEL FUNCTIONS ---
+
+            /**
+             * Renders the list of pending users for the admin.
+             * @param {Object[]} users - Array of user profile objects.
+             */
+            function renderPendingUsers(users) {
+                // Filter to ensure we only show pending users who aren't the admin themselves
+                const pending = users.filter(u => u.status === 'pending' && u.email !== ADMIN_EMAIL);
+                ui.pendingMembersList.innerHTML = '';
+
+                if (pending.length === 0) {
+                    ui.pendingMembersList.innerHTML = '<p class="text-gray-400 text-sm">No pending members.</p>';
+                    return;
+                }
+
+                pending.forEach(user => {
+                    const item = document.createElement('div');
+                    item.className = 'flex justify-between items-center p-3 bg-bg-dark rounded-xl border border-gray-700 hover:border-primary transition';
+                    item.innerHTML = `
+                        <span class="font-semibold text-white truncate mr-2">${user.name}</span>
+                        <div class="flex-shrink-0 space-x-2">
+                            <button data-uid="${user.uid}" data-action="approve" class="px-3 py-1 bg-primary text-bg-dark text-xs rounded-lg hover:bg-green-400 transition duration-150 font-semibold">Approve</button>
+                            <button data-uid="${user.uid}" data-action="reject" class="px-3 py-1 bg-error text-white text-xs rounded-lg hover:bg-red-600 transition duration-150 font-semibold">Reject</button>
+                        </div>
+                    `;
+                    ui.pendingMembersList.appendChild(item);
+                });
+            }
+
+            /**
+             * Handles Approve/Reject action from the admin panel.
+             * @param {string} uid - User ID to modify.
+             * @param {string} action - 'approve' or 'reject'.
+             */
+            async function handleAdminAction(uid, action) {
+                const userProfileRef = db.collection(`artifacts/${appId}/users/${uid}/profiles`).doc('current');
+                const userDoc = await userProfileRef.get();
+                if (!userDoc.exists) {
+                    console.error("User document not found for admin action.");
+                    return;
+                }
+                const user = userDoc.data();
+
+                if (action === 'approve') {
+                    // 1. Update user profile status
+                    await userProfileRef.update({ status: 'approved' });
+                    // 2. Add user to group_members collection (public data)
+                    await db.collection(`artifacts/${appId}/public/data/group_members`).doc(uid).set({
+                        name: user.name,
+                        email: user.email,
+                        role: user.role,
+                        joinedAt: firebase.firestore.FieldValue.serverTimestamp()
+                    });
+                    console.log(`Approved ${user.name}`);
+                } else if (action === 'reject') {
+                    // 1. Update user profile status
+                    await userProfileRef.update({ status: 'rejected' });
+                    // 2. Ensure they are not in group_members (if somehow they were)
+                    await db.collection(`artifacts/${appId}/public/data/group_members`).doc(uid).delete().catch(e => console.log("Member not in group to delete."));
+                    console.log(`Rejected ${user.name}`);
+                }
+            }
+
+
+            // --- AI EXPENSE PARSING ---
+
+            // Exponential backoff retry helper
+            async function fetchWithRetry(url, options, maxRetries = 5) {
+                for (let i = 0; i < maxRetries; i++) {
+                    try {
+                        const response = await fetch(url, options);
+                        if (response.status === 429 && i < maxRetries - 1) {
+                            const delay = Math.pow(2, i) * 1000 + Math.random() * 1000;
+                            console.warn(`Rate limit exceeded. Retrying in ${delay / 1000}s...`);
+                            await new Promise(resolve => setTimeout(resolve, delay));
+                            continue;
+                        }
+                        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                        return response;
+                    } catch (error) {
+                        if (i === maxRetries - 1) throw error;
+                        const delay = Math.pow(2, i) * 1000 + Math.random() * 1000;
+                        console.warn(`Fetch error. Retrying in ${delay / 1000}s...`);
+                        await new Promise(resolve => setTimeout(resolve, delay));
+                    }
+                }
+            }
+
+
+            /**
+             * Submits the natural language text to Gemini for structured JSON output.
+             * @param {string} text - Natural language expense description.
+             * @returns {Object|null} Parsed JSON object or null on error.
+             */
+            async function parseExpenseWithAI(text) {
+                if (!geminiAI) return { error: "Gemini API not initialized. Please check console errors." };
+
+                const memberNames = allMembersArray.map(uid => groupMembers[uid].name).join(', ');
+                const systemInstruction = `You are an intelligent expense parser. Your task is to extract expense details from natural language input. The group members are: ${memberNames}. When the input says "for everyone", the split_recipients must be an array of ALL names listed above. When the input only mentions specific members, only include those members.
+
+                The expected output MUST be a single, valid JSON object following this schema:
+                {
+                    "payer": "string (The name of the member who paid)",
+                    "total_amount": "number (The total cost of the expense, without currency symbols. Must be positive.)",
+                    "description": "string (A brief summary of the expense)",
+                    "split_recipients": "array of strings (The names of the members who share the cost, including the payer)"
+                }
+
+                If a member's name is not recognizable, use the best phonetic match. If any required field (payer, total_amount, split_recipients) is missing or invalid, you MUST return an error message as JSON:
+                {"error": "string explaining the failure"}
+                `;
+                
+                const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
+
+                const payload = {
+                    contents: [{ parts: [{ text: text }] }],
+                    systemInstruction: { parts: [{ text: systemInstruction }] },
+                    config: {
+                        responseMimeType: "application/json",
+                    }
+                };
+
+                try {
+                    const response = await fetchWithRetry(apiUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                    
+                    const result = await response.json();
+                    const jsonText = result?.candidates?.[0]?.content?.parts?.[0]?.text;
+
+                    if (!jsonText) {
+                        throw new Error("AI returned an empty response or invalid structure.");
+                    }
+
+                    const parsedResult = JSON.parse(jsonText.trim().replace(/^```json|```$/g, '').trim());
+                    
+                    if (parsedResult.error) {
+                        throw new Error(parsedResult.error);
+                    }
+
+                    // Post-processing and validation
+                    if (typeof parsedResult.total_amount !== 'number' || parsedResult.total_amount <= 0) {
+                        throw new Error("Total amount must be a positive number.");
+                    }
+
+                    const memberNamesToUID = Object.values(groupMembers).reduce((acc, m) => {
+                        acc[m.name.toLowerCase()] = m.uid;
+                        return acc;
+                    }, {});
+
+                    const payerUID = memberNamesToUID[parsedResult.payer.toLowerCase()];
+                    const recipientUIDs = Array.from(new Set(
+                        parsedResult.split_recipients.map(name => memberNamesToUID[name.toLowerCase()])
+                    )).filter(uid => uid);
+
+                    if (!payerUID) {
+                        throw new Error(`Payer name '${parsedResult.payer}' not matched to an approved member.`);
+                    }
+                    if (recipientUIDs.length === 0) {
+                         throw new Error(`No valid recipients found from: ${parsedResult.split_recipients.join(', ')}`);
+                    }
+
+                    return {
+                        payer_uid: payerUID,
+                        total_amount: parseFloat(parsedResult.total_amount),
+                        description: parsedResult.description || `Expense paid by ${parsedResult.payer}`,
+                        split_recipient_uids: recipientUIDs,
+                    };
+
+                } catch (error) {
+                    console.error("AI Parsing or Post-Processing Error:", error);
+                    return { error: error.message || "An unknown parsing error occurred." };
+                }
+            }
+
+            // --- DEBT SIMPLIFICATION ALGORITHM ---
+
+            /**
+             * Calculates the net balance for all members.
+             * @returns {Object} A map of {uid: net_balance}
+             */
+            function calculateNetBalances() {
+                // Ensure all approved members are included, even if they have no transactions
+                const netBalances = allMembersArray.reduce((acc, uid) => {
+                    acc[uid] = 0;
+                    return acc;
+                }, {});
+
+                allTransactions.filter(t => t.status === 'processed').forEach(t => {
+                    const expensePerMember = t.total_amount / t.split_recipient_uids.length;
+                    const payer = t.payer_uid;
+
+                    t.split_recipient_uids.forEach(recipient => {
+                        if (netBalances.hasOwnProperty(recipient)) {
+                            netBalances[recipient] -= expensePerMember; // Each recipient owes
+                        }
+                    });
+
+                    if (netBalances.hasOwnProperty(payer)) {
+                        // The payer gets credited for the total amount they paid, covering their own share
+                        netBalances[payer] += expensePerMember * t.split_recipient_uids.length;
+                    }
+                });
+
+                // Round to avoid floating point errors
+                for (const uid in netBalances) {
+                    netBalances[uid] = Math.round(netBalances[uid] * 100) / 100;
+                }
+
+                return netBalances;
+            }
+
+            /**
+             * Implements the Debt Simplification algorithm (minimizing payments).
+             * @param {Object} balances - Map of {uid: net_balance}
+             * @returns {Object[]} Array of minimal payment objects {from_uid, to_uid, amount}
+             */
+            function simplifyDebt(balances) {
+                const debtors = []; // Negative balance
+                const creditors = []; // Positive balance
+                const payments = [];
+
+                // 1. Separate debtors and creditors
+                for (const uid in balances) {
+                    const balance = balances[uid];
+                    if (balance > 0.01) {
+                        creditors.push({ uid, balance });
+                    } else if (balance < -0.01) {
+                        // Use absolute value for easy calculation
+                        debtors.push({ uid, balance: -balance });
+                    }
+                }
+
+                let d = 0, c = 0;
+                while (d < debtors.length && c < creditors.length) {
+                    const debtor = debtors[d];
+                    const creditor = creditors[c];
+
+                    // The smaller of the two amounts is the payment
+                    const paymentAmount = Math.min(debtor.balance, creditor.balance);
+
+                    if (paymentAmount > 0.01) {
+                        payments.push({
+                            from_uid: debtor.uid,
+                            to_uid: creditor.uid,
+                            amount: paymentAmount
+                        });
+                    }
+
+                    // Update balances
+                    debtor.balance = Math.round((debtor.balance - paymentAmount) * 100) / 100;
+                    creditor.balance = Math.round((creditor.balance - paymentAmount) * 100) / 100;
+
+                    // Move to the next debtor/creditor if their balance is settled
+                    if (debtor.balance < 0.01) d++;
+                    if (creditor.balance < 0.01) c++;
+                }
+
+                return payments;
+            }
+
+            // --- UI RENDERING FUNCTIONS ---
+
+            /**
+             * Renders the transaction history in the main panel.
+             */
+            function renderTransactionHistory() {
+                ui.history.innerHTML = '';
+
+                if (allTransactions.length === 0) {
+                    ui.history.innerHTML = '<div class="text-center text-gray-500 py-10">Start by submitting an expense! (e.g., "Alice paid $50 for everyone")</div>';
+                    return;
+                }
+
+                allTransactions.forEach(t => {
+                    const is_processed = t.status === 'processed';
+                    const is_error = t.status === 'error';
+                    const statusColor = is_processed ? 'bg-green-700' : is_error ? 'bg-error' : 'bg-yellow-600';
+                    const statusIcon = is_processed ? '✅' : is_error ? '❌' : '⏳';
+                    const senderName = groupMembers[t.submitted_by_uid]?.name || 'Unknown User';
+
+                    const card = document.createElement('div');
+                    card.className = `p-4 rounded-xl shadow-xl ${is_error ? 'bg-red-900/40 border border-error' : 'bg-surface border border-gray-700'}`;
+                    
+                    let content = `<p class="text-xs text-gray-400 mb-3">
+                                    <span class="font-semibold text-white">${senderName}</span> submitted on ${new Date(t.timestamp.toDate()).toLocaleString()}
+                                    </p>
+                                    <p class="mb-3 p-3 bg-bg-dark rounded-lg italic border-l-4 border-primary/50">
+                                       <strong class="text-primary/70">Input:</strong> ${t.input_text}
+                                    </p>`;
+
+                    if (is_processed) {
+                        const payerName = groupMembers[t.payer_uid]?.name || 'Unknown';
+                        const splitNames = uidsToNames(t.split_recipient_uids).join(', ');
+                        const amountPerPerson = formatCurrency(t.total_amount / t.split_recipient_uids.length);
+
+                        content += `
+                            <div class="space-y-2 pt-3 border-t border-gray-600">
+                                <h4 class="font-bold text-lg flex items-center text-white">
+                                    <span class="${statusColor} text-white text-xs px-3 py-1 rounded-full mr-2 font-semibold">${statusIcon} Processed</span> 
+                                    ${t.description}
+                                </h4>
+                                <p class="pl-2"><strong>Payer:</strong> <span class="text-primary font-semibold">${payerName}</span></p>
+                                <p class="pl-2"><strong>Total:</strong> <span class="text-primary font-semibold">${formatCurrency(t.total_amount)}</span></p>
+                                <p class="pl-2 text-sm text-gray-300">Split between: ${splitNames} (${amountPerPerson} each)</p>
+                            </div>
+                        `;
+                    } else if (is_error) {
+                        content += `<p class="text-error font-semibold pt-3 border-t border-gray-600">
+                                        <span class="${statusColor} text-white text-xs px-3 py-1 rounded-full mr-2 font-semibold">${statusIcon} Error</span>
+                                        ${t.error_message || 'AI Parsing failed'}
+                                    </p>`;
+                    } else { // pending
+                        content += `<p class="text-yellow-400 font-semibold pt-3 border-t border-gray-600">Status: ${statusIcon} Pending AI Processing...</p>`;
+                    }
+                    
+                    card.innerHTML = content;
+                    ui.history.appendChild(card);
+                });
+
+                // Scroll to the bottom
+                ui.history.scrollTop = ui.history.scrollHeight;
+            }
+
+            /**
+             * Calculates and renders the current net balances and simplified debt summary.
+             */
+            function calculateAndRenderBalances() {
+                if (allMembersArray.length === 0) {
+                    ui.balancesSummary.innerHTML = '<p class="text-gray-400 text-sm">No approved members yet.</p>';
+                    return;
+                }
+
+                currentBalances = calculateNetBalances();
+                ui.balancesSummary.innerHTML = '';
+
+                // 1. Render Net Balances
+                const balanceKeys = Object.keys(currentBalances);
+                balanceKeys.sort((a, b) => currentBalances[b] - currentBalances[a]); // Sort by balance (highest first)
+
+                balanceKeys.forEach(uid => {
+                    const balance = currentBalances[uid];
+                    const name = groupMembers[uid]?.name || 'Unknown';
+                    const isPositive = balance > 0.01;
+                    const isZero = Math.abs(balance) < 0.01;
+                    
+                    let balanceColor = 'text-gray-400';
+                    let sign = '';
+                    if (isPositive) { balanceColor = 'text-primary'; sign = '+'; }
+                    if (!isPositive && !isZero) { balanceColor = 'text-error'; }
+
+                    const item = document.createElement('div');
+                    item.className = 'flex justify-between items-center p-3 rounded-lg cursor-pointer bg-bg-dark hover:bg-gray-800 transition duration-150 group border border-gray-700';
+                    item.setAttribute('data-uid', uid);
+                    item.innerHTML = `
+                        <span class="font-semibold text-white">${name}</span>
+                        <span class="font-extrabold ${balanceColor}">
+                            ${isZero ? 'Settled' : `${sign}${formatCurrency(balance)}`}
+                        </span>
+                    `;
+                    ui.balancesSummary.appendChild(item);
+                });
+            }
+
+            /**
+             * Renders the simplified debt plan for a specific member in a modal.
+             * @param {string} targetUid - The UID of the member to focus on.
+             */
+            function renderDebtDetailModal(targetUid) {
+                const targetName = groupMembers[targetUid]?.name || 'Unknown';
+                ui.debtModalTitle.textContent = `Payments for ${targetName}`;
+                ui.debtModalContent.innerHTML = '';
+
+                const netBalances = calculateNetBalances();
+                const allPayments = simplifyDebt(netBalances);
+                
+                const owedToMe = allPayments.filter(p => p.to_uid === targetUid);
+                const Iowe = allPayments.filter(p => p.from_uid === targetUid);
+
+                const netBalance = netBalances[targetUid];
+                let netText = 'Account is settled.';
+                let netColor = 'text-gray-400';
+                if (netBalance > 0.01) { 
+                    netText = `Net Owed to You: ${formatCurrency(netBalance)}`;
+                    netColor = 'text-primary';
+                } else if (netBalance < -0.01) { 
+                    netText = `Net You Owe: ${formatCurrency(-netBalance)}`;
+                    netColor = 'text-error';
+                }
+
+                ui.debtModalContent.innerHTML += `<p class="text-xl font-extrabold mb-4 text-center border-b pb-3 ${netColor}">${netText}</p>`;
+
+
+                // 1. Owed to Target Member
+                if (owedToMe.length > 0) {
+                    const owedList = document.createElement('div');
+                    owedList.className = 'p-4 bg-green-900/20 rounded-lg border border-primary';
+                    owedList.innerHTML = '<h4 class="font-bold mb-2 text-primary flex items-center"><span class="text-2xl mr-2">↑</span> You Need To Receive:</h4>';
+                    owedToMe.forEach(p => {
+                        const fromName = groupMembers[p.from_uid]?.name || 'Unknown';
+                        owedList.innerHTML += `<p class="ml-2 font-medium">→ <span class="text-white">${fromName}</span> owes <span class="text-primary font-semibold">${formatCurrency(p.amount)}</span></p>`;
+                    });
+                    ui.debtModalContent.appendChild(owedList);
+                }
+
+                // 2. Target Member Owes
+                if (Iowe.length > 0) {
+                    const payList = document.createElement('div');
+                    payList.className = 'p-4 bg-red-900/20 rounded-lg border border-error';
+                    payList.innerHTML = '<h4 class="font-bold mb-2 text-error flex items-center"><span class="text-2xl mr-2">↓</span> You Need To Pay:</h4>';
+                    Iowe.forEach(p => {
+                        const toName = groupMembers[p.to_uid]?.name || 'Unknown';
+                        payList.innerHTML += `<p class="ml-2 font-medium">→ Pay <span class="text-white">${toName}</span> <span class="text-error font-semibold">${formatCurrency(p.amount)}</span></p>`;
+                    });
+                    ui.debtModalContent.appendChild(payList);
+                }
+
+                if (owedToMe.length === 0 && Iowe.length === 0) {
+                    ui.debtModalContent.innerHTML += '<p class="text-center text-gray-400 p-4">You are not involved in any remaining minimal payments.</p>';
+                }
+
+                ui.debtModal.classList.remove('hidden');
+            }
+
+
+            // --- EVENT LISTENERS ---
+
+            // Auth Form Submission (Sign In/Sign Up)
+            ui.authForm.addEventListener('submit', (e) => {
+                e.preventDefault();
+                const email = ui.authEmail.value;
+                const password = ui.authPassword.value;
+                ui.authError.classList.add('hidden');
+                ui.authError.textContent = '';
+
+                if (isSignIn) {
+                    auth.signInWithEmailAndPassword(email, password).catch(error => {
+                        ui.authError.textContent = error.message;
+                        ui.authError.classList.remove('hidden');
+                    });
+                } else {
+                    auth.createUserWithEmailAndPassword(email, password).catch(error => {
+                        ui.authError.textContent = error.message;
+                        ui.authError.classList.remove('hidden');
+                    });
+                }
+            });
+
+            // Toggle Sign In / Sign Up
+            ui.authToggle.addEventListener('click', () => {
+                isSignIn = !isSignIn;
+                ui.authTitle.textContent = isSignIn ? 'Sign In' : 'Sign Up';
+                ui.authToggle.textContent = isSignIn ? 'Need an account? Sign Up' : 'Already have an account? Sign In';
+                ui.authError.classList.add('hidden');
+            });
+
+            // Sign Out Buttons
+            document.getElementById('sign-out-btn').addEventListener('click', handleSignOut);
+            document.getElementById('sign-out-pending').addEventListener('click', handleSignOut);
+
+            // Expense Form Submission
+            ui.expenseForm.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const input_text = ui.expenseInput.value.trim();
+                if (!input_text || !currentUser || !userData || userData.status !== 'approved') return;
+
+                // Path: /artifacts/{appId}/public/data/transactions
+                const transactionsRef = db.collection(`artifacts/${appId}/public/data/transactions`);
+
+                const tempId = transactionsRef.doc().id; 
+                const submitted_by_uid = currentUser.uid;
+
+                // 1. Submit initial 'pending' transaction to Firestore
+                const initialTransaction = {
+                    input_text,
+                    submitted_by_uid,
+                    status: 'pending',
+                    timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+                };
+                await transactionsRef.doc(tempId).set(initialTransaction);
+
+                ui.expenseInput.value = ''; // Clear input immediately
+                ui.expenseInput.disabled = true;
+                ui.submitExpenseBtn.disabled = true;
+
+                // 2. Call AI parsing function
+                const parsedData = await parseExpenseWithAI(input_text);
+
+                ui.expenseInput.disabled = false;
+                ui.submitExpenseBtn.disabled = false;
+
+
+                // 3. Update transaction status based on AI result
+                let updateData = {};
+                if (parsedData.error) {
+                    updateData = {
+                        status: 'error',
+                        error_message: parsedData.error,
+                        processed_at: firebase.firestore.FieldValue.serverTimestamp(),
+                    };
+                } else {
+                    updateData = {
+                        status: 'processed',
+                        payer_uid: parsedData.payer_uid,
+                        total_amount: parsedData.total_amount,
+                        description: parsedData.description,
+                        split_recipient_uids: parsedData.split_recipient_uids,
+                        processed_at: firebase.firestore.FieldValue.serverTimestamp(),
+                    };
+                }
+
+                await transactionsRef.doc(tempId).update(updateData);
+            });
+
+            // Admin Panel Delegate Event Listener
+            ui.adminPanel.addEventListener('click', (e) => {
+                const btn = e.target.closest('button');
+                if (!btn) return;
+                const uid = btn.dataset.uid;
+                const action = btn.dataset.action;
+                if (uid && action) {
+                    handleAdminAction(uid, action);
+                }
+            });
+
+            // Balance Summary Delegate Event Listener (Click to see Debt Detail)
+            ui.balancesSummary.addEventListener('click', (e) => {
+                const item = e.target.closest('[data-uid]');
+                if (!item) return;
+                const uid = item.dataset.uid;
+                renderDebtDetailModal(uid);
+            });
+
+            // Close Debt Modal
+            document.getElementById('close-debt-modal').addEventListener('click', () => {
+                ui.debtModal.classList.add('hidden');
+            });
+
+
+            // Export CSV Utility
+            document.getElementById('export-csv-btn').addEventListener('click', () => {
+                const processedTransactions = allTransactions.filter(t => t.status === 'processed');
+                if (processedTransactions.length === 0) {
+                    // Use a non-blocking message instead of alert
+                    console.log("No processed transactions to export.");
+                    return;
+                }
+
+                // CSV Header
+                let csvContent = "data:text/csv;charset=utf-8,ID,Timestamp,Payer,Amount,Description,Split Recipients,Cost Per Person\n";
+
+                processedTransactions.forEach(t => {
+                    const timestamp = new Date(t.timestamp.toDate()).toISOString();
+                    const payerName = groupMembers[t.payer_uid]?.name || 'Unknown';
+                    const splitNames = uidsToNames(t.split_recipient_uids).join('; '); // Use semicolon as separator for the list
+                    const amountPerPerson = (t.total_amount / t.split_recipient_uids.length).toFixed(2);
+                    
+                    // Escape commas in description
+                    const description = `"${t.description.replace(/"/g, '""')}"`;
+
+                    const row = [
+                        t.id, 
+                        timestamp, 
+                        payerName, 
+                        t.total_amount.toFixed(2), 
+                        description, 
+                        splitNames, 
+                        amountPerPerson
+                    ].join(',');
+                    csvContent += row + "\n";
+                });
+
+                // Trigger download
+                const encodedUri = encodeURI(csvContent);
+                const link = document.createElement("a");
+                link.setAttribute("href", encodedUri);
+                link.setAttribute("download", "expense_tracker_export.csv");
+                document.body.appendChild(link); // Required for Firefox
+                link.click();
+                document.body.removeChild(link);
+            });
+        });
+    </script>
+</body>
+</html>
