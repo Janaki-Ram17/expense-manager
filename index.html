@@ -1,1038 +1,840 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Group Expense Tracker</title>
-    <!-- Tailwind CSS CDN -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Firebase SDKs -->
-    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
-    
-    <!-- Gemini SDK Import (Module) -->
-    <script type="module">
-        import { GoogleGenAI } from "https://esm.run/@google/genai";
-        // Assign the imported class to the window object so the non-module script can access it
-        window.GoogleGenAI = GoogleGenAI; 
-    </script>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>AI Group Expense Tracker — Real-time</title>
 
-    <!-- Tailwind Configuration and Custom Styles -->
-    <style>
-        :root {
-            --bg-color: #1a202c; /* Dark Slate Gray */
-            --surface-color: #2d3748; /* Darker Surface */
-            --primary-color: #48bb78; /* Green Accent */
-            --error-color: #f56565; /* Red */
+  <!-- Tailwind CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    // Tailwind config (dark theme colors)
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            surface: 'rgba(30,30,30,1)',
+            bg: '#0b0f13',
+            primary: '#7c3aed',
+            accent: '#06b6d4',
+            danger: '#ef4444',
+            success: '#10b981',
+            muted: '#94a3b8'
+          }
         }
-        body {
-            background-color: var(--bg-color);
-        }
-        /* Custom scrollbar for transaction history */
-        #transaction-history::-webkit-scrollbar {
-            width: 8px;
-        }
-        #transaction-history::-webkit-scrollbar-thumb {
-            background-color: #48bb7850; /* Primary color with transparency */
-            border-radius: 4px;
-        }
-        #transaction-history::-webkit-scrollbar-track {
-            background-color: var(--bg-color);
-        }
-    </style>
-    <script>
-        tailwind.config = {
-            darkMode: 'class', // Default to dark theme
-            theme: {
-                extend: {
-                    colors: {
-                        'bg-dark': 'var(--bg-color)',
-                        'surface': 'var(--surface-color)',
-                        'primary': 'var(--primary-color)',
-                        'error': 'var(--error-color)',
-                    }
-                }
-            }
-        }
-    </script>
+      }
+    }
+  </script>
+
+  <style>
+    :root{
+      --bg-color: #0b0f13;
+      --surface-color: #0e1216;
+      --primary-color: #7c3aed;
+      --accent-color: #06b6d4;
+    }
+    body { background: linear-gradient(180deg,var(--bg-color), #081019); }
+    /* subtle chat scrollbar */
+    .scrollbar-thin::-webkit-scrollbar { height:8px; width:8px; }
+    .scrollbar-thin::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.06); border-radius:8px; }
+  </style>
 </head>
-<body class="min-h-screen bg-bg-dark text-white font-[Inter]">
+<body class="dark text-slate-200 antialiased min-h-screen">
 
-    <!-- Auth Modals (Sign In/Sign Up) -->
-    <div id="auth-modal" class="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
-        <div class="bg-surface p-8 rounded-xl shadow-2xl w-full max-w-sm border border-gray-700">
-            <h2 id="auth-title" class="text-3xl font-extrabold mb-6 text-center text-primary">Sign In</h2>
-            <form id="auth-form" class="space-y-4">
-                <input type="email" id="auth-email" placeholder="Email (admin@expense.com for admin)" required class="w-full p-3 rounded-lg bg-bg-dark border border-gray-600 focus:ring-primary focus:border-primary">
-                <input type="password" id="auth-password" placeholder="Password" required class="w-full p-3 rounded-lg bg-bg-dark border border-gray-600 focus:ring-primary focus:border-primary">
-                <button type="submit" class="w-full py-3 bg-primary text-bg-dark font-bold rounded-lg shadow-lg hover:bg-green-400 transition duration-200">
-                    Submit
-                </button>
-            </form>
-            <button id="toggle-auth" class="w-full mt-4 text-sm text-center text-gray-400 hover:text-primary transition">
-                Need an account? Sign Up
-            </button>
-            <p id="auth-error" class="text-error text-center mt-3 hidden"></p>
-        </div>
+<!-- Main App Container -->
+<div id="app" class="min-h-screen flex flex-col md:flex-row">
+
+  <!-- LEFT: Sidebar (Balances + Admin) -->
+  <aside class="w-full md:w-80 bg-surface p-4 md:h-screen md:sticky top-0 border-r border-slate-800">
+    <div class="flex items-center gap-3 mb-4">
+      <div class="w-12 h-12 rounded-lg bg-gradient-to-br from-primary to-accent flex items-center justify-center text-white font-bold text-lg">AE</div>
+      <div>
+        <div class="text-lg font-semibold">AI Expense</div>
+        <div class="text-sm text-slate-400">Real-time Group Tracker</div>
+      </div>
     </div>
 
-    <!-- Pending User Modal -->
-    <div id="pending-modal" class="fixed inset-0 bg-black bg-opacity-90 flex items-center justify-center z-50 hidden">
-        <div class="bg-surface p-10 rounded-xl shadow-2xl w-full max-w-lg text-center border border-yellow-500">
-            <svg class="w-16 h-16 mx-auto mb-4 text-yellow-400 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.39 16c-.77 1.333.192 3 1.732 3z"></path></svg>
-            <h2 class="text-3xl font-extrabold mb-4 text-yellow-400">Account Pending Approval</h2>
-            <p class="text-gray-300 mb-6">Your account is currently awaiting administrator approval. Please wait or sign out.</p>
-            <button id="sign-out-pending" class="py-2 px-4 bg-error text-white font-bold rounded-lg shadow-md hover:bg-red-600 transition duration-200">Sign Out</button>
-        </div>
+    <div id="authArea" class="space-y-3">
+      <!-- Dynamic auth UI injected by JS -->
     </div>
 
-    <!-- Debt Detail Modal -->
-    <div id="debt-modal" class="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 hidden">
-        <div class="bg-surface p-6 rounded-xl shadow-2xl w-full max-w-md border border-gray-700">
-            <div class="flex justify-between items-center mb-4 border-b pb-2 border-bg-dark">
-                <h3 id="debt-modal-title" class="text-2xl font-extrabold text-primary">Debt Details</h3>
-                <button id="close-debt-modal" class="text-gray-400 hover:text-white transition">
-                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
-                </button>
-            </div>
-            <div id="debt-modal-content" class="space-y-3">
-                <!-- Detailed payments will be injected here -->
-            </div>
-        </div>
+    <hr class="border-slate-800 my-4" />
+
+    <div>
+      <h3 class="text-sm uppercase text-slate-400 mb-2">Current Balances</h3>
+      <div id="balancesList" class="space-y-2 max-h-72 overflow-y-auto scrollbar-thin"></div>
+
+      <div class="mt-3">
+        <button id="exportCSV" class="w-full py-2 rounded-md bg-slate-700 hover:bg-slate-650 disabled:opacity-40" title="Export processed transactions to CSV">
+          Export Processed CSV
+        </button>
+      </div>
     </div>
 
-    <!-- Main Application Container -->
-    <div id="app-container" class="min-h-screen hidden">
-        <div class="grid grid-cols-1 lg:grid-cols-4 gap-0">
-            
-            <!-- Left Panel: Transaction History & Input (Main Chat View) -->
-            <div class="lg:col-span-3 flex flex-col h-screen p-6 bg-bg-dark border-r border-gray-700">
-                <header class="flex justify-between items-center pb-4 mb-4 border-b border-surface">
-                    <h1 class="text-4xl font-extrabold text-primary flex items-center">
-                        <svg class="w-8 h-8 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z"></path></svg>
-                        Split AI
-                    </h1>
-                    <div class="flex items-center space-x-3">
-                         <button id="export-csv-btn" class="flex items-center px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-500 transition duration-200 text-sm font-medium">
-                            <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2-8H4a2 2 0 00-2 2v10a2 2 0 002 2h16a2 2 0 002-2V6a2 2 0 00-2-2z"></path></svg>
-                            Export
-                        </button>
-                        <button id="sign-out-btn" class="px-4 py-2 bg-error text-white rounded-lg font-medium hover:bg-red-600 transition duration-200 text-sm">Sign Out</button>
-                    </div>
-                </header>
-
-                <!-- Transaction History -->
-                <div id="transaction-history" class="flex-grow overflow-y-auto space-y-6 pb-4">
-                    <!-- Transactions will be injected here -->
-                    <div class="text-center text-gray-500 py-10">Start by submitting an expense! (e.g., "Jane paid 88 for everyone")</div>
-                </div>
-
-                <!-- Expense Input Area -->
-                <div class="pt-4 border-t border-surface">
-                    <p class="text-sm mb-2 text-gray-400">
-                        Logged in as: <span id="current-user-info" class="font-semibold text-primary">...</span>
-                    </p>
-                    <form id="expense-form" class="flex space-x-3">
-                        <input type="text" id="expense-input" placeholder="e.g., 'Alice paid $50 for dinner with Bob and Charlie'" required 
-                               class="flex-grow p-4 rounded-xl bg-surface border border-gray-600 focus:ring-primary focus:border-primary placeholder-gray-500 text-white disabled:opacity-50"
-                               disabled>
-                        <button type="submit" id="submit-expense-btn" 
-                                class="px-6 py-4 bg-primary text-bg-dark font-bold rounded-xl shadow-lg hover:bg-green-400 transition duration-200 disabled:opacity-50"
-                                disabled>
-                            Send
-                        </button>
-                    </form>
-                </div>
-            </div>
-
-            <!-- Right Panel: Summary & Admin -->
-            <div class="lg:col-span-1 flex flex-col h-screen p-6 bg-surface overflow-y-auto border-l border-gray-700">
-                
-                <!-- Current Balances -->
-                <section class="mb-8">
-                    <h2 class="text-2xl font-extrabold mb-4 border-b pb-2 border-bg-dark text-white">Current Balances</h2>
-                    <div id="balances-summary" class="space-y-2">
-                        <!-- Balances will be injected here -->
-                        <p class="text-gray-400 text-sm">Loading balances...</p>
-                    </div>
-                </section>
-                
-                <!-- Admin Panel (Visible only to Admin) -->
-                <section id="admin-panel" class="hidden mt-6 pt-4 border-t border-bg-dark">
-                    <h2 class="text-2xl font-extrabold mb-3 text-error">Admin Controls</h2>
-                    <h3 class="text-xl font-semibold mb-3 text-white">Pending Members</h3>
-                    <div id="pending-members-list" class="space-y-3">
-                        <!-- Pending users will be injected here -->
-                        <p class="text-gray-400 text-sm">No pending members.</p>
-                    </div>
-                </section>
-            </div>
-        </div>
+    <div id="adminPanel" class="mt-6 hidden">
+      <hr class="border-slate-800 my-4" />
+      <h3 class="text-sm uppercase text-slate-400 mb-2">Admin: Pending Users</h3>
+      <div id="pendingUsers" class="space-y-2 max-h-48 overflow-y-auto scrollbar-thin"></div>
     </div>
 
-
-    <script>
-        document.addEventListener('DOMContentLoaded', () => {
-            // --- GLOBAL CONFIGURATION ---
-            // These global variables are expected to be provided by the canvas environment
-            const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-            const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : { /* default config */ };
-            const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
-            
-            // IMPORTANT: Replace this with your actual Gemini API Key
-            const GEMINI_API_KEY = ""; 
-            const GEMINI_MODEL = "gemini-2.5-flash-preview-09-2025";
-            const ADMIN_EMAIL = "admin@expense.com";
-
-            // Initialize Firebase
-            firebase.initializeApp(firebaseConfig);
-            const auth = firebase.auth();
-            const db = firebase.firestore();
-            
-            // Log Firestore events for debugging
-            firebase.firestore.setLogLevel('debug'); 
-
-            let geminiAI;
-
-            // Check if the GoogleGenAI class was successfully attached to the window object by the module script
-            if (window.GoogleGenAI) {
-                // Initialize Gemini AI client
-                geminiAI = new window.GoogleGenAI({ apiKey: GEMINI_API_KEY });
-            } else {
-                // Fallback / Error check, though the DOMContentLoaded should ensure it's loaded
-                console.error("Gemini SDK not loaded. Cannot initialize AI client.");
-            }
-
-
-            // --- STATE VARIABLES ---
-            let currentUser = null;
-            let userData = null; // Stores user profile data (role, status, name)
-            let groupMembers = {}; // Key-value map: {uid: {name, status, email}} - ONLY APPROVED MEMBERS
-            let allTransactions = []; // Stores all transactions for display/calculation
-            let currentBalances = {}; // Stores the net balance for each member
-            let allMembersArray = []; // Array of all approved member UIDs for debt calc
-
-
-            // --- UI ELEMENTS ---
-            const ui = {
-                authModal: document.getElementById('auth-modal'),
-                pendingModal: document.getElementById('pending-modal'),
-                appContainer: document.getElementById('app-container'),
-                authForm: document.getElementById('auth-form'),
-                authEmail: document.getElementById('auth-email'),
-                authPassword: document.getElementById('auth-password'),
-                authTitle: document.getElementById('auth-title'),
-                authError: document.getElementById('auth-error'),
-                authToggle: document.getElementById('toggle-auth'),
-                expenseForm: document.getElementById('expense-form'),
-                expenseInput: document.getElementById('expense-input'),
-                submitExpenseBtn: document.getElementById('submit-expense-btn'),
-                history: document.getElementById('transaction-history'),
-                balancesSummary: document.getElementById('balances-summary'),
-                adminPanel: document.getElementById('admin-panel'),
-                pendingMembersList: document.getElementById('pending-members-list'),
-                currentUserInfo: document.getElementById('current-user-info'),
-                debtModal: document.getElementById('debt-modal'),
-                debtModalTitle: document.getElementById('debt-modal-title'),
-                debtModalContent: document.getElementById('debt-modal-content'),
-            };
-
-            let isSignIn = true;
-
-
-            // --- DATA MODEL & HELPERS ---
-
-            /**
-             * Converts member UIDs in a transaction split to names.
-             * @param {string[]} recipientUids - Array of UIDs.
-             * @returns {string[]} Array of member names.
-             */
-            function uidsToNames(recipientUids) {
-                return recipientUids.map(uid => groupMembers[uid]?.name || 'Unknown User');
-            }
-
-            /**
-             * Formats a number as a currency string.
-             * @param {number} amount
-             * @returns {string} Formatted currency.
-             */
-            function formatCurrency(amount) {
-                return new Intl.NumberFormat('en-US', {
-                    style: 'currency',
-                    currency: 'USD',
-                    minimumFractionDigits: 2,
-                }).format(amount);
-            }
-
-            /**
-             * Clears all session data and redirects to sign-in.
-             */
-            function handleSignOut() {
-                auth.signOut().then(() => {
-                    // Clear state
-                    currentUser = null;
-                    userData = null;
-                    groupMembers = {};
-                    allTransactions = [];
-                    currentBalances = {};
-                    
-                    // Reset UI
-                    ui.appContainer.classList.add('hidden');
-                    ui.pendingModal.classList.add('hidden');
-                    ui.authModal.classList.remove('hidden');
-                    ui.history.innerHTML = '<div class="text-center text-gray-500 py-10">Start by submitting an expense! (e.g., "Alice paid $50 for everyone")</div>';
-                }).catch((error) => {
-                    console.error("Sign Out Error:", error);
-                });
-            }
-
-
-            // --- AUTHENTICATION & UI FLOW ---
-
-            /**
-             * Handles the authentication state change.
-             * @param {firebase.User} user
-             */
-            auth.onAuthStateChanged(async (user) => {
-                if (user) {
-                    currentUser = user;
-                    ui.authModal.classList.add('hidden');
-
-                    // Initial sign in or subsequent load
-                    if (initialAuthToken && !auth.currentUser) {
-                        try {
-                            await auth.signInWithCustomToken(initialAuthToken);
-                            console.log("Signed in with custom token.");
-                        } catch (error) {
-                            console.error("Custom token sign-in failed:", error);
-                            // Fallback or error handling
-                        }
-                    } else if (!auth.currentUser) {
-                        try {
-                            await auth.signInAnonymously();
-                            console.log("Signed in anonymously.");
-                        } catch (error) {
-                            console.error("Anonymous sign-in failed:", error);
-                        }
-                    }
-
-                    // Check/Create User Profile and set up listeners
-                    await ensureUserProfile(user);
-                    
-                } else {
-                    currentUser = null;
-                    ui.appContainer.classList.add('hidden');
-                    ui.pendingModal.classList.add('hidden');
-                    ui.authModal.classList.remove('hidden');
-                }
-            });
-
-            /**
-             * Ensures the user has a profile in the 'users' collection and sets initial state.
-             * @param {firebase.User} user
-             */
-            async function ensureUserProfile(user) {
-                // Path: /artifacts/{appId}/users/{userId}/profiles
-                const userRef = db.collection(`artifacts/${appId}/users/${user.uid}/profiles`).doc('current');
-                const doc = await userRef.get();
-
-                if (!doc.exists) {
-                    // Initial creation upon sign-up
-                    const is_admin = user.email === ADMIN_EMAIL;
-                    const initial_status = is_admin ? 'approved' : 'pending';
-                    const name = user.email ? user.email.split('@')[0] : 'Anonymous'; // Simple name extraction
-
-                    await userRef.set({
-                        email: user.email || 'anonymous',
-                        name: name.charAt(0).toUpperCase() + name.slice(1), // Capitalize
-                        role: is_admin ? 'admin' : 'member',
-                        status: initial_status,
-                        createdAt: firebase.firestore.FieldValue.serverTimestamp()
-                    });
-
-                    // If admin, immediately add to group_members collection
-                     if (is_admin) {
-                         await db.collection(`artifacts/${appId}/public/data/group_members`).doc(user.uid).set({
-                            name: name.charAt(0).toUpperCase() + name.slice(1),
-                            email: user.email,
-                            role: 'admin',
-                            joinedAt: firebase.firestore.FieldValue.serverTimestamp()
-                        });
-                    }
-                }
-                
-                // Listen for profile changes (especially status)
-                userRef.onSnapshot(doc => {
-                    if (doc.exists) {
-                        userData = doc.data();
-                        renderApplicationState();
-                    } else {
-                        console.error("User profile document not found. Signing out.");
-                        handleSignOut();
-                    }
-                });
-            }
-
-            /**
-             * Renders the main application based on the user's approval status.
-             */
-            function renderApplicationState() {
-                if (!userData || !currentUser) return;
-
-                ui.currentUserInfo.textContent = `${userData.name} (Role: ${userData.role}, Status: ${userData.status})`;
-
-                if (userData.status === 'approved') {
-                    ui.appContainer.classList.remove('hidden');
-                    ui.pendingModal.classList.add('hidden');
-                    ui.expenseInput.disabled = false;
-                    ui.submitExpenseBtn.disabled = false;
-                    
-                    // Admin panel visibility
-                    if (userData.role === 'admin') {
-                        ui.adminPanel.classList.remove('hidden');
-                    } else {
-                        ui.adminPanel.classList.add('hidden');
-                    }
-                    
-                    // Start real-time listeners for group data and transactions
-                    setupRealTimeListeners();
-
-                } else { // status: 'pending' or other
-                    ui.appContainer.classList.add('hidden');
-                    ui.pendingModal.classList.remove('hidden');
-                    ui.expenseInput.disabled = true;
-                    ui.submitExpenseBtn.disabled = true;
-                }
-            }
-
-
-            // --- REAL-TIME LISTENERS (FIRESTORE) ---
-
-            function setupRealTimeListeners() {
-                // Path: /artifacts/{appId}/public/data/group_members
-                const groupMembersRef = db.collection(`artifacts/${appId}/public/data/group_members`);
-
-                // 1. Group Members Listener (Approved Users)
-                groupMembersRef.onSnapshot(snapshot => {
-                    groupMembers = {};
-                    allMembersArray = [];
-                    snapshot.forEach(doc => {
-                        const member = doc.data();
-                        groupMembers[doc.id] = {...member, uid: doc.id};
-                        allMembersArray.push(doc.id); // For easy iteration in calc
-                    });
-                    // Recalculate balances and redraw summary
-                    calculateAndRenderBalances();
-                }, error => console.error("Group Members Listener Error:", error));
-
-                // 2. All Users Listener (For Admin Panel) - Reading all profiles from all users
-                if (userData.role === 'admin') {
-                     // Note: Since profiles are stored per user, we need a collection group query or specific structure to fetch all.
-                     // For simplicity here, we'll try to listen to all user subcollections if rules allow, or just the current admin's known public data.
-                     // The Admin can read all user profiles, which are stored under their own UID: /artifacts/{appId}/users/{userId}/profiles/current
-                    db.collectionGroup('profiles').onSnapshot(snapshot => {
-                        renderPendingUsers(snapshot.docs.map(doc => ({...doc.data(), uid: doc.ref.parent.parent.id})));
-                    }, error => console.error("Admin Users Listener Error (Collection Group might need index):", error));
-                }
-
-                // Path: /artifacts/{appId}/public/data/transactions
-                const transactionsRef = db.collection(`artifacts/${appId}/public/data/transactions`);
-
-                // 3. Transactions Listener
-                transactionsRef.orderBy('timestamp', 'asc').onSnapshot(snapshot => {
-                    allTransactions = snapshot.docs.map(doc => ({...doc.data(), id: doc.id}));
-                    renderTransactionHistory();
-                    calculateAndRenderBalances();
-                }, error => console.error("Transactions Listener Error:", error));
-            }
-
-
-            // --- ADMIN PANEL FUNCTIONS ---
-
-            /**
-             * Renders the list of pending users for the admin.
-             * @param {Object[]} users - Array of user profile objects.
-             */
-            function renderPendingUsers(users) {
-                // Filter to ensure we only show pending users who aren't the admin themselves
-                const pending = users.filter(u => u.status === 'pending' && u.email !== ADMIN_EMAIL);
-                ui.pendingMembersList.innerHTML = '';
-
-                if (pending.length === 0) {
-                    ui.pendingMembersList.innerHTML = '<p class="text-gray-400 text-sm">No pending members.</p>';
-                    return;
-                }
-
-                pending.forEach(user => {
-                    const item = document.createElement('div');
-                    item.className = 'flex justify-between items-center p-3 bg-bg-dark rounded-xl border border-gray-700 hover:border-primary transition';
-                    item.innerHTML = `
-                        <span class="font-semibold text-white truncate mr-2">${user.name}</span>
-                        <div class="flex-shrink-0 space-x-2">
-                            <button data-uid="${user.uid}" data-action="approve" class="px-3 py-1 bg-primary text-bg-dark text-xs rounded-lg hover:bg-green-400 transition duration-150 font-semibold">Approve</button>
-                            <button data-uid="${user.uid}" data-action="reject" class="px-3 py-1 bg-error text-white text-xs rounded-lg hover:bg-red-600 transition duration-150 font-semibold">Reject</button>
-                        </div>
-                    `;
-                    ui.pendingMembersList.appendChild(item);
-                });
-            }
-
-            /**
-             * Handles Approve/Reject action from the admin panel.
-             * @param {string} uid - User ID to modify.
-             * @param {string} action - 'approve' or 'reject'.
-             */
-            async function handleAdminAction(uid, action) {
-                const userProfileRef = db.collection(`artifacts/${appId}/users/${uid}/profiles`).doc('current');
-                const userDoc = await userProfileRef.get();
-                if (!userDoc.exists) {
-                    console.error("User document not found for admin action.");
-                    return;
-                }
-                const user = userDoc.data();
-
-                if (action === 'approve') {
-                    // 1. Update user profile status
-                    await userProfileRef.update({ status: 'approved' });
-                    // 2. Add user to group_members collection (public data)
-                    await db.collection(`artifacts/${appId}/public/data/group_members`).doc(uid).set({
-                        name: user.name,
-                        email: user.email,
-                        role: user.role,
-                        joinedAt: firebase.firestore.FieldValue.serverTimestamp()
-                    });
-                    console.log(`Approved ${user.name}`);
-                } else if (action === 'reject') {
-                    // 1. Update user profile status
-                    await userProfileRef.update({ status: 'rejected' });
-                    // 2. Ensure they are not in group_members (if somehow they were)
-                    await db.collection(`artifacts/${appId}/public/data/group_members`).doc(uid).delete().catch(e => console.log("Member not in group to delete."));
-                    console.log(`Rejected ${user.name}`);
-                }
-            }
-
-
-            // --- AI EXPENSE PARSING ---
-
-            // Exponential backoff retry helper
-            async function fetchWithRetry(url, options, maxRetries = 5) {
-                for (let i = 0; i < maxRetries; i++) {
-                    try {
-                        const response = await fetch(url, options);
-                        if (response.status === 429 && i < maxRetries - 1) {
-                            const delay = Math.pow(2, i) * 1000 + Math.random() * 1000;
-                            console.warn(`Rate limit exceeded. Retrying in ${delay / 1000}s...`);
-                            await new Promise(resolve => setTimeout(resolve, delay));
-                            continue;
-                        }
-                        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-                        return response;
-                    } catch (error) {
-                        if (i === maxRetries - 1) throw error;
-                        const delay = Math.pow(2, i) * 1000 + Math.random() * 1000;
-                        console.warn(`Fetch error. Retrying in ${delay / 1000}s...`);
-                        await new Promise(resolve => setTimeout(resolve, delay));
-                    }
-                }
-            }
-
-
-            /**
-             * Submits the natural language text to Gemini for structured JSON output.
-             * @param {string} text - Natural language expense description.
-             * @returns {Object|null} Parsed JSON object or null on error.
-             */
-            async function parseExpenseWithAI(text) {
-                if (!geminiAI) return { error: "Gemini API not initialized. Please check console errors." };
-
-                const memberNames = allMembersArray.map(uid => groupMembers[uid].name).join(', ');
-                const systemInstruction = `You are an intelligent expense parser. Your task is to extract expense details from natural language input. The group members are: ${memberNames}. When the input says "for everyone", the split_recipients must be an array of ALL names listed above. When the input only mentions specific members, only include those members.
-
-                The expected output MUST be a single, valid JSON object following this schema:
-                {
-                    "payer": "string (The name of the member who paid)",
-                    "total_amount": "number (The total cost of the expense, without currency symbols. Must be positive.)",
-                    "description": "string (A brief summary of the expense)",
-                    "split_recipients": "array of strings (The names of the members who share the cost, including the payer)"
-                }
-
-                If a member's name is not recognizable, use the best phonetic match. If any required field (payer, total_amount, split_recipients) is missing or invalid, you MUST return an error message as JSON:
-                {"error": "string explaining the failure"}
-                `;
-                
-                const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
-
-                const payload = {
-                    contents: [{ parts: [{ text: text }] }],
-                    systemInstruction: { parts: [{ text: systemInstruction }] },
-                    config: {
-                        responseMimeType: "application/json",
-                    }
-                };
-
-                try {
-                    const response = await fetchWithRetry(apiUrl, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(payload)
-                    });
-                    
-                    const result = await response.json();
-                    const jsonText = result?.candidates?.[0]?.content?.parts?.[0]?.text;
-
-                    if (!jsonText) {
-                        throw new Error("AI returned an empty response or invalid structure.");
-                    }
-
-                    const parsedResult = JSON.parse(jsonText.trim().replace(/^```json|```$/g, '').trim());
-                    
-                    if (parsedResult.error) {
-                        throw new Error(parsedResult.error);
-                    }
-
-                    // Post-processing and validation
-                    if (typeof parsedResult.total_amount !== 'number' || parsedResult.total_amount <= 0) {
-                        throw new Error("Total amount must be a positive number.");
-                    }
-
-                    const memberNamesToUID = Object.values(groupMembers).reduce((acc, m) => {
-                        acc[m.name.toLowerCase()] = m.uid;
-                        return acc;
-                    }, {});
-
-                    const payerUID = memberNamesToUID[parsedResult.payer.toLowerCase()];
-                    const recipientUIDs = Array.from(new Set(
-                        parsedResult.split_recipients.map(name => memberNamesToUID[name.toLowerCase()])
-                    )).filter(uid => uid);
-
-                    if (!payerUID) {
-                        throw new Error(`Payer name '${parsedResult.payer}' not matched to an approved member.`);
-                    }
-                    if (recipientUIDs.length === 0) {
-                         throw new Error(`No valid recipients found from: ${parsedResult.split_recipients.join(', ')}`);
-                    }
-
-                    return {
-                        payer_uid: payerUID,
-                        total_amount: parseFloat(parsedResult.total_amount),
-                        description: parsedResult.description || `Expense paid by ${parsedResult.payer}`,
-                        split_recipient_uids: recipientUIDs,
-                    };
-
-                } catch (error) {
-                    console.error("AI Parsing or Post-Processing Error:", error);
-                    return { error: error.message || "An unknown parsing error occurred." };
-                }
-            }
-
-            // --- DEBT SIMPLIFICATION ALGORITHM ---
-
-            /**
-             * Calculates the net balance for all members.
-             * @returns {Object} A map of {uid: net_balance}
-             */
-            function calculateNetBalances() {
-                // Ensure all approved members are included, even if they have no transactions
-                const netBalances = allMembersArray.reduce((acc, uid) => {
-                    acc[uid] = 0;
-                    return acc;
-                }, {});
-
-                allTransactions.filter(t => t.status === 'processed').forEach(t => {
-                    const expensePerMember = t.total_amount / t.split_recipient_uids.length;
-                    const payer = t.payer_uid;
-
-                    t.split_recipient_uids.forEach(recipient => {
-                        if (netBalances.hasOwnProperty(recipient)) {
-                            netBalances[recipient] -= expensePerMember; // Each recipient owes
-                        }
-                    });
-
-                    if (netBalances.hasOwnProperty(payer)) {
-                        // The payer gets credited for the total amount they paid, covering their own share
-                        netBalances[payer] += expensePerMember * t.split_recipient_uids.length;
-                    }
-                });
-
-                // Round to avoid floating point errors
-                for (const uid in netBalances) {
-                    netBalances[uid] = Math.round(netBalances[uid] * 100) / 100;
-                }
-
-                return netBalances;
-            }
-
-            /**
-             * Implements the Debt Simplification algorithm (minimizing payments).
-             * @param {Object} balances - Map of {uid: net_balance}
-             * @returns {Object[]} Array of minimal payment objects {from_uid, to_uid, amount}
-             */
-            function simplifyDebt(balances) {
-                const debtors = []; // Negative balance
-                const creditors = []; // Positive balance
-                const payments = [];
-
-                // 1. Separate debtors and creditors
-                for (const uid in balances) {
-                    const balance = balances[uid];
-                    if (balance > 0.01) {
-                        creditors.push({ uid, balance });
-                    } else if (balance < -0.01) {
-                        // Use absolute value for easy calculation
-                        debtors.push({ uid, balance: -balance });
-                    }
-                }
-
-                let d = 0, c = 0;
-                while (d < debtors.length && c < creditors.length) {
-                    const debtor = debtors[d];
-                    const creditor = creditors[c];
-
-                    // The smaller of the two amounts is the payment
-                    const paymentAmount = Math.min(debtor.balance, creditor.balance);
-
-                    if (paymentAmount > 0.01) {
-                        payments.push({
-                            from_uid: debtor.uid,
-                            to_uid: creditor.uid,
-                            amount: paymentAmount
-                        });
-                    }
-
-                    // Update balances
-                    debtor.balance = Math.round((debtor.balance - paymentAmount) * 100) / 100;
-                    creditor.balance = Math.round((creditor.balance - paymentAmount) * 100) / 100;
-
-                    // Move to the next debtor/creditor if their balance is settled
-                    if (debtor.balance < 0.01) d++;
-                    if (creditor.balance < 0.01) c++;
-                }
-
-                return payments;
-            }
-
-            // --- UI RENDERING FUNCTIONS ---
-
-            /**
-             * Renders the transaction history in the main panel.
-             */
-            function renderTransactionHistory() {
-                ui.history.innerHTML = '';
-
-                if (allTransactions.length === 0) {
-                    ui.history.innerHTML = '<div class="text-center text-gray-500 py-10">Start by submitting an expense! (e.g., "Alice paid $50 for everyone")</div>';
-                    return;
-                }
-
-                allTransactions.forEach(t => {
-                    const is_processed = t.status === 'processed';
-                    const is_error = t.status === 'error';
-                    const statusColor = is_processed ? 'bg-green-700' : is_error ? 'bg-error' : 'bg-yellow-600';
-                    const statusIcon = is_processed ? '✅' : is_error ? '❌' : '⏳';
-                    const senderName = groupMembers[t.submitted_by_uid]?.name || 'Unknown User';
-
-                    const card = document.createElement('div');
-                    card.className = `p-4 rounded-xl shadow-xl ${is_error ? 'bg-red-900/40 border border-error' : 'bg-surface border border-gray-700'}`;
-                    
-                    let content = `<p class="text-xs text-gray-400 mb-3">
-                                    <span class="font-semibold text-white">${senderName}</span> submitted on ${new Date(t.timestamp.toDate()).toLocaleString()}
-                                    </p>
-                                    <p class="mb-3 p-3 bg-bg-dark rounded-lg italic border-l-4 border-primary/50">
-                                       <strong class="text-primary/70">Input:</strong> ${t.input_text}
-                                    </p>`;
-
-                    if (is_processed) {
-                        const payerName = groupMembers[t.payer_uid]?.name || 'Unknown';
-                        const splitNames = uidsToNames(t.split_recipient_uids).join(', ');
-                        const amountPerPerson = formatCurrency(t.total_amount / t.split_recipient_uids.length);
-
-                        content += `
-                            <div class="space-y-2 pt-3 border-t border-gray-600">
-                                <h4 class="font-bold text-lg flex items-center text-white">
-                                    <span class="${statusColor} text-white text-xs px-3 py-1 rounded-full mr-2 font-semibold">${statusIcon} Processed</span> 
-                                    ${t.description}
-                                </h4>
-                                <p class="pl-2"><strong>Payer:</strong> <span class="text-primary font-semibold">${payerName}</span></p>
-                                <p class="pl-2"><strong>Total:</strong> <span class="text-primary font-semibold">${formatCurrency(t.total_amount)}</span></p>
-                                <p class="pl-2 text-sm text-gray-300">Split between: ${splitNames} (${amountPerPerson} each)</p>
-                            </div>
-                        `;
-                    } else if (is_error) {
-                        content += `<p class="text-error font-semibold pt-3 border-t border-gray-600">
-                                        <span class="${statusColor} text-white text-xs px-3 py-1 rounded-full mr-2 font-semibold">${statusIcon} Error</span>
-                                        ${t.error_message || 'AI Parsing failed'}
-                                    </p>`;
-                    } else { // pending
-                        content += `<p class="text-yellow-400 font-semibold pt-3 border-t border-gray-600">Status: ${statusIcon} Pending AI Processing...</p>`;
-                    }
-                    
-                    card.innerHTML = content;
-                    ui.history.appendChild(card);
-                });
-
-                // Scroll to the bottom
-                ui.history.scrollTop = ui.history.scrollHeight;
-            }
-
-            /**
-             * Calculates and renders the current net balances and simplified debt summary.
-             */
-            function calculateAndRenderBalances() {
-                if (allMembersArray.length === 0) {
-                    ui.balancesSummary.innerHTML = '<p class="text-gray-400 text-sm">No approved members yet.</p>';
-                    return;
-                }
-
-                currentBalances = calculateNetBalances();
-                ui.balancesSummary.innerHTML = '';
-
-                // 1. Render Net Balances
-                const balanceKeys = Object.keys(currentBalances);
-                balanceKeys.sort((a, b) => currentBalances[b] - currentBalances[a]); // Sort by balance (highest first)
-
-                balanceKeys.forEach(uid => {
-                    const balance = currentBalances[uid];
-                    const name = groupMembers[uid]?.name || 'Unknown';
-                    const isPositive = balance > 0.01;
-                    const isZero = Math.abs(balance) < 0.01;
-                    
-                    let balanceColor = 'text-gray-400';
-                    let sign = '';
-                    if (isPositive) { balanceColor = 'text-primary'; sign = '+'; }
-                    if (!isPositive && !isZero) { balanceColor = 'text-error'; }
-
-                    const item = document.createElement('div');
-                    item.className = 'flex justify-between items-center p-3 rounded-lg cursor-pointer bg-bg-dark hover:bg-gray-800 transition duration-150 group border border-gray-700';
-                    item.setAttribute('data-uid', uid);
-                    item.innerHTML = `
-                        <span class="font-semibold text-white">${name}</span>
-                        <span class="font-extrabold ${balanceColor}">
-                            ${isZero ? 'Settled' : `${sign}${formatCurrency(balance)}`}
-                        </span>
-                    `;
-                    ui.balancesSummary.appendChild(item);
-                });
-            }
-
-            /**
-             * Renders the simplified debt plan for a specific member in a modal.
-             * @param {string} targetUid - The UID of the member to focus on.
-             */
-            function renderDebtDetailModal(targetUid) {
-                const targetName = groupMembers[targetUid]?.name || 'Unknown';
-                ui.debtModalTitle.textContent = `Payments for ${targetName}`;
-                ui.debtModalContent.innerHTML = '';
-
-                const netBalances = calculateNetBalances();
-                const allPayments = simplifyDebt(netBalances);
-                
-                const owedToMe = allPayments.filter(p => p.to_uid === targetUid);
-                const Iowe = allPayments.filter(p => p.from_uid === targetUid);
-
-                const netBalance = netBalances[targetUid];
-                let netText = 'Account is settled.';
-                let netColor = 'text-gray-400';
-                if (netBalance > 0.01) { 
-                    netText = `Net Owed to You: ${formatCurrency(netBalance)}`;
-                    netColor = 'text-primary';
-                } else if (netBalance < -0.01) { 
-                    netText = `Net You Owe: ${formatCurrency(-netBalance)}`;
-                    netColor = 'text-error';
-                }
-
-                ui.debtModalContent.innerHTML += `<p class="text-xl font-extrabold mb-4 text-center border-b pb-3 ${netColor}">${netText}</p>`;
-
-
-                // 1. Owed to Target Member
-                if (owedToMe.length > 0) {
-                    const owedList = document.createElement('div');
-                    owedList.className = 'p-4 bg-green-900/20 rounded-lg border border-primary';
-                    owedList.innerHTML = '<h4 class="font-bold mb-2 text-primary flex items-center"><span class="text-2xl mr-2">↑</span> You Need To Receive:</h4>';
-                    owedToMe.forEach(p => {
-                        const fromName = groupMembers[p.from_uid]?.name || 'Unknown';
-                        owedList.innerHTML += `<p class="ml-2 font-medium">→ <span class="text-white">${fromName}</span> owes <span class="text-primary font-semibold">${formatCurrency(p.amount)}</span></p>`;
-                    });
-                    ui.debtModalContent.appendChild(owedList);
-                }
-
-                // 2. Target Member Owes
-                if (Iowe.length > 0) {
-                    const payList = document.createElement('div');
-                    payList.className = 'p-4 bg-red-900/20 rounded-lg border border-error';
-                    payList.innerHTML = '<h4 class="font-bold mb-2 text-error flex items-center"><span class="text-2xl mr-2">↓</span> You Need To Pay:</h4>';
-                    Iowe.forEach(p => {
-                        const toName = groupMembers[p.to_uid]?.name || 'Unknown';
-                        payList.innerHTML += `<p class="ml-2 font-medium">→ Pay <span class="text-white">${toName}</span> <span class="text-error font-semibold">${formatCurrency(p.amount)}</span></p>`;
-                    });
-                    ui.debtModalContent.appendChild(payList);
-                }
-
-                if (owedToMe.length === 0 && Iowe.length === 0) {
-                    ui.debtModalContent.innerHTML += '<p class="text-center text-gray-400 p-4">You are not involved in any remaining minimal payments.</p>';
-                }
-
-                ui.debtModal.classList.remove('hidden');
-            }
-
-
-            // --- EVENT LISTENERS ---
-
-            // Auth Form Submission (Sign In/Sign Up)
-            ui.authForm.addEventListener('submit', (e) => {
-                e.preventDefault();
-                const email = ui.authEmail.value;
-                const password = ui.authPassword.value;
-                ui.authError.classList.add('hidden');
-                ui.authError.textContent = '';
-
-                if (isSignIn) {
-                    auth.signInWithEmailAndPassword(email, password).catch(error => {
-                        ui.authError.textContent = error.message;
-                        ui.authError.classList.remove('hidden');
-                    });
-                } else {
-                    auth.createUserWithEmailAndPassword(email, password).catch(error => {
-                        ui.authError.textContent = error.message;
-                        ui.authError.classList.remove('hidden');
-                    });
-                }
-            });
-
-            // Toggle Sign In / Sign Up
-            ui.authToggle.addEventListener('click', () => {
-                isSignIn = !isSignIn;
-                ui.authTitle.textContent = isSignIn ? 'Sign In' : 'Sign Up';
-                ui.authToggle.textContent = isSignIn ? 'Need an account? Sign Up' : 'Already have an account? Sign In';
-                ui.authError.classList.add('hidden');
-            });
-
-            // Sign Out Buttons
-            document.getElementById('sign-out-btn').addEventListener('click', handleSignOut);
-            document.getElementById('sign-out-pending').addEventListener('click', handleSignOut);
-
-            // Expense Form Submission
-            ui.expenseForm.addEventListener('submit', async (e) => {
-                e.preventDefault();
-                const input_text = ui.expenseInput.value.trim();
-                if (!input_text || !currentUser || !userData || userData.status !== 'approved') return;
-
-                // Path: /artifacts/{appId}/public/data/transactions
-                const transactionsRef = db.collection(`artifacts/${appId}/public/data/transactions`);
-
-                const tempId = transactionsRef.doc().id; 
-                const submitted_by_uid = currentUser.uid;
-
-                // 1. Submit initial 'pending' transaction to Firestore
-                const initialTransaction = {
-                    input_text,
-                    submitted_by_uid,
-                    status: 'pending',
-                    timestamp: firebase.firestore.FieldValue.serverTimestamp(),
-                };
-                await transactionsRef.doc(tempId).set(initialTransaction);
-
-                ui.expenseInput.value = ''; // Clear input immediately
-                ui.expenseInput.disabled = true;
-                ui.submitExpenseBtn.disabled = true;
-
-                // 2. Call AI parsing function
-                const parsedData = await parseExpenseWithAI(input_text);
-
-                ui.expenseInput.disabled = false;
-                ui.submitExpenseBtn.disabled = false;
-
-
-                // 3. Update transaction status based on AI result
-                let updateData = {};
-                if (parsedData.error) {
-                    updateData = {
-                        status: 'error',
-                        error_message: parsedData.error,
-                        processed_at: firebase.firestore.FieldValue.serverTimestamp(),
-                    };
-                } else {
-                    updateData = {
-                        status: 'processed',
-                        payer_uid: parsedData.payer_uid,
-                        total_amount: parsedData.total_amount,
-                        description: parsedData.description,
-                        split_recipient_uids: parsedData.split_recipient_uids,
-                        processed_at: firebase.firestore.FieldValue.serverTimestamp(),
-                    };
-                }
-
-                await transactionsRef.doc(tempId).update(updateData);
-            });
-
-            // Admin Panel Delegate Event Listener
-            ui.adminPanel.addEventListener('click', (e) => {
-                const btn = e.target.closest('button');
-                if (!btn) return;
-                const uid = btn.dataset.uid;
-                const action = btn.dataset.action;
-                if (uid && action) {
-                    handleAdminAction(uid, action);
-                }
-            });
-
-            // Balance Summary Delegate Event Listener (Click to see Debt Detail)
-            ui.balancesSummary.addEventListener('click', (e) => {
-                const item = e.target.closest('[data-uid]');
-                if (!item) return;
-                const uid = item.dataset.uid;
-                renderDebtDetailModal(uid);
-            });
-
-            // Close Debt Modal
-            document.getElementById('close-debt-modal').addEventListener('click', () => {
-                ui.debtModal.classList.add('hidden');
-            });
-
-
-            // Export CSV Utility
-            document.getElementById('export-csv-btn').addEventListener('click', () => {
-                const processedTransactions = allTransactions.filter(t => t.status === 'processed');
-                if (processedTransactions.length === 0) {
-                    // Use a non-blocking message instead of alert
-                    console.log("No processed transactions to export.");
-                    return;
-                }
-
-                // CSV Header
-                let csvContent = "data:text/csv;charset=utf-8,ID,Timestamp,Payer,Amount,Description,Split Recipients,Cost Per Person\n";
-
-                processedTransactions.forEach(t => {
-                    const timestamp = new Date(t.timestamp.toDate()).toISOString();
-                    const payerName = groupMembers[t.payer_uid]?.name || 'Unknown';
-                    const splitNames = uidsToNames(t.split_recipient_uids).join('; '); // Use semicolon as separator for the list
-                    const amountPerPerson = (t.total_amount / t.split_recipient_uids.length).toFixed(2);
-                    
-                    // Escape commas in description
-                    const description = `"${t.description.replace(/"/g, '""')}"`;
-
-                    const row = [
-                        t.id, 
-                        timestamp, 
-                        payerName, 
-                        t.total_amount.toFixed(2), 
-                        description, 
-                        splitNames, 
-                        amountPerPerson
-                    ].join(',');
-                    csvContent += row + "\n";
-                });
-
-                // Trigger download
-                const encodedUri = encodeURI(csvContent);
-                const link = document.createElement("a");
-                link.setAttribute("href", encodedUri);
-                link.setAttribute("download", "expense_tracker_export.csv");
-                document.body.appendChild(link); // Required for Firefox
-                link.click();
-                document.body.removeChild(link);
-            });
+    <div class="mt-6 text-xs text-slate-500">
+      <div>Built with Firebase + OpenAI (Gemini style) parsing.</div>
+      <div class="mt-2">⚠️ Replace API keys & Firebase config before use. Don't publish keys client-side.</div>
+    </div>
+  </aside>
+
+  <!-- RIGHT: Main Panel (Chat-style transactions + Input) -->
+  <main class="flex-1 p-4 md:p-8 flex flex-col min-h-screen">
+    <div class="flex-1 flex flex-col bg-transparent">
+      <!-- Chat / Transaction History -->
+      <div id="chatArea" class="flex-1 overflow-auto p-4 rounded-xl border border-slate-800 bg-gradient-to-b from-transparent to-[#071018] scrollbar-thin">
+        <!-- messages injected here -->
+      </div>
+
+      <!-- Input area -->
+      <div class="mt-4">
+        <div id="userInfo" class="flex items-center justify-between text-sm text-slate-400 mb-2">
+          <!-- user name/role -->
+        </div>
+
+        <div class="flex gap-3">
+          <textarea id="nlInput" rows="2" placeholder="E.g., 'paid 2000 for petrol, split with all' or 'I paid 150 for dinner with Bob and Charlie'" class="flex-1 resize-none rounded-xl bg-slate-900 border border-slate-800 p-3 focus:outline-none" ></textarea>
+          <div class="flex flex-col gap-2">
+            <button id="sendBtn" class="px-4 py-2 rounded-xl bg-primary text-white hover:brightness-95 disabled:opacity-50">Send</button>
+            <button id="quickSplitBtn" class="px-4 py-2 rounded-xl bg-slate-700 text-slate-200 text-xs hover:bg-slate-600">Quick Split</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- Modal for Pending Block -->
+<div id="pendingModal" class="fixed inset-0 bg-black/70 hidden items-center justify-center z-50">
+  <div class="bg-surface p-6 rounded-lg w-11/12 max-w-md text-center">
+    <h3 class="text-xl font-semibold mb-2">Access Pending</h3>
+    <p class="text-slate-400 mb-4">Your account is pending approval by an admin. You cannot use the app until an admin approves you.</p>
+    <div class="flex justify-center gap-2">
+      <button id="signOutPending" class="px-4 py-2 rounded bg-red-600">Sign out</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal for Debt Details -->
+<div id="debtModal" class="fixed inset-0 bg-black/60 hidden items-center justify-center z-50">
+  <div class="bg-surface p-5 rounded-lg w-11/12 max-w-lg">
+    <div class="flex justify-between items-center mb-4">
+      <h3 id="debtModalTitle" class="text-lg font-semibold">Debt details</h3>
+      <button id="closeDebtModal" class="text-slate-400 hover:text-white">✕</button>
+    </div>
+    <div id="debtModalBody" class="space-y-2 text-sm text-slate-300">
+      <!-- details -->
+    </div>
+  </div>
+</div>
+
+<!-- Firebase SDKs (modular compat) -->
+<script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore-compat.js"></script>
+
+<script>
+/* ================================
+   CONFIG: Fill these before running
+   ================================ */
+const FIREBASE_CONFIG = {
+  apiKey: "YOUR_FIREBASE_API_KEY",
+  authDomain: "YOUR_FIREBASE_AUTH_DOMAIN",
+  projectId: "YOUR_PROJECT_ID",
+  storageBucket: "YOUR_BUCKET",
+  messagingSenderId: "YOUR_MSG_SENDER_ID",
+  appId: "YOUR_APP_ID"
+};
+
+// For OpenAI/Gemini style requests. For production, route via server.
+const OPENAI_API_KEY = "YOUR_OPENAI_API_KEY";  // *** Replace *** (don't expose in production)
+
+/* ================================
+   Initialize Firebase
+   ================================ */
+firebase.initializeApp(FIREBASE_CONFIG);
+const auth = firebase.auth();
+const db = firebase.firestore();
+
+db.settings({ignoreUndefinedProperties: true});
+
+/* ================================
+   Global State + Helpers
+   ================================ */
+let currentUser = null;
+let usersMap = {};        // uid -> {email, name, role, status}
+let groupMembers = [];    // array of approved member objects {uid,email,name}
+let transactions = [];    // real-time transactions list
+
+// Collections
+const usersCol = db.collection('users');
+const membersCol = db.collection('group_members');
+const txCol = db.collection('transactions');
+
+/* ================================
+   Auth UI & Flows
+   ================================ */
+const authArea = document.getElementById('authArea');
+const chatArea = document.getElementById('chatArea');
+const balancesList = document.getElementById('balancesList');
+const pendingModal = document.getElementById('pendingModal');
+const adminPanel = document.getElementById('adminPanel');
+const pendingUsersDiv = document.getElementById('pendingUsers');
+const userInfo = document.getElementById('userInfo');
+const sendBtn = document.getElementById('sendBtn');
+const nlInput = document.getElementById('nlInput');
+const exportCSV = document.getElementById('exportCSV');
+
+function renderAuthUI() {
+  authArea.innerHTML = '';
+  const user = auth.currentUser;
+  if (!user) {
+    // Sign up / Sign in form
+    authArea.innerHTML = `
+      <div class="space-y-2">
+        <input id="email" type="email" placeholder="Email" class="w-full px-3 py-2 rounded bg-slate-900 border border-slate-800" />
+        <input id="password" type="password" placeholder="Password" class="w-full px-3 py-2 rounded bg-slate-900 border border-slate-800" />
+        <div class="flex gap-2">
+          <button id="signUpBtn" class="flex-1 py-2 rounded bg-primary text-white">Sign up</button>
+          <button id="signInBtn" class="flex-1 py-2 rounded bg-slate-700">Sign in</button>
+        </div>
+        <div class="text-xs text-slate-400">Tip: admin account is <b>admin@expense.com</b> (it will auto-approve).</div>
+      </div>`;
+    document.getElementById('signUpBtn').onclick = async () => {
+      const email = document.getElementById('email').value.trim();
+      const pwd = document.getElementById('password').value;
+      if (!email || !pwd) return alert('Enter email & password');
+      try {
+        const cred = await auth.createUserWithEmailAndPassword(email, pwd);
+        const u = cred.user;
+        // create user doc: role & status
+        const role = (email.toLowerCase() === 'admin@expense.com') ? 'admin' : 'member';
+        const status = (email.toLowerCase() === 'admin@expense.com') ? 'approved' : 'pending';
+        await usersCol.doc(u.uid).set({
+          email, name: email.split('@')[0], role, status, createdAt: firebase.firestore.FieldValue.serverTimestamp()
         });
-    </script>
+        if (status === 'approved') {
+          // add to group_members for admin
+          await membersCol.doc(u.uid).set({uid: u.uid, email, name: email.split('@')[0], joinedAt: firebase.firestore.FieldValue.serverTimestamp()});
+        }
+        alert('Account created. If pending, please wait for admin approval.');
+        renderAuthUI();
+      } catch (err) {
+        console.error(err);
+        alert(err.message || err);
+      }
+    };
+    document.getElementById('signInBtn').onclick = async () => {
+      const email = document.getElementById('email').value.trim();
+      const pwd = document.getElementById('password').value;
+      if (!email || !pwd) return alert('Enter email & password');
+      try {
+        await auth.signInWithEmailAndPassword(email, pwd);
+        renderAuthUI();
+      } catch (err) {
+        console.error(err);
+        alert(err.message || err);
+      }
+    };
+  } else {
+    // show signed in
+    authArea.innerHTML = `
+      <div class="p-3 bg-slate-900 rounded-lg">
+        <div class="font-semibold">${currentUser?.name || currentUser?.email}</div>
+        <div class="text-xs text-slate-400">${currentUser?.email}</div>
+        <div class="mt-3 text-xs text-slate-400">Role: <span id="meRole">${currentUser?.role || 'member'}</span></div>
+        <div class="mt-3 flex gap-2">
+          <button id="signOut" class="flex-1 py-2 rounded bg-red-600">Sign out</button>
+        </div>
+      </div>`;
+    document.getElementById('signOut').onclick = () => auth.signOut();
+  }
+}
+
+/* ================================
+   Realtime listeners
+   ================================ */
+
+// Listen for all user docs
+usersCol.onSnapshot(snap => {
+  snap.docChanges().forEach(change => {
+    const d = change.doc.data();
+    usersMap[change.doc.id] = {...d, uid: change.doc.id};
+  });
+  // refresh UI where needed
+  renderPendingUsers();
+  if (currentUser) renderAuthUI();
+});
+
+// group members (approved)
+membersCol.onSnapshot(snap => {
+  groupMembers = [];
+  snap.forEach(doc => groupMembers.push({uid: doc.id, ...doc.data()}));
+  renderBalances(); // recalc
+});
+
+// transactions (listen live)
+txCol.orderBy('createdAt','desc').limit(500).onSnapshot(snap => {
+  transactions = [];
+  snap.forEach(doc => transactions.push({id: doc.id, ...doc.data()}));
+  renderTransactions();
+  renderBalances();
+});
+
+/* ================================
+   Admin: Pending Users
+   ================================ */
+function renderPendingUsers(){
+  const pending = Object.values(usersMap).filter(u => u.status === 'pending');
+  pendingUsersDiv.innerHTML = '';
+  if (pending.length === 0) pendingUsersDiv.innerHTML = `<div class="text-xs text-slate-400">No pending users</div>`;
+  pending.forEach(u => {
+    const el = document.createElement('div');
+    el.className = 'flex items-center justify-between p-2 rounded bg-slate-900 border border-slate-800';
+    el.innerHTML = `
+      <div>
+        <div class="font-medium">${u.name || u.email}</div>
+        <div class="text-xs text-slate-400">${u.email}</div>
+      </div>
+      <div class="flex gap-2">
+        <button class="px-3 py-1 rounded bg-green-600 approveBtn">Approve</button>
+        <button class="px-3 py-1 rounded bg-red-600 rejectBtn">Reject</button>
+      </div>
+    `;
+    pendingUsersDiv.appendChild(el);
+    el.querySelector('.approveBtn').onclick = async () => {
+      try {
+        await usersCol.doc(u.uid).update({status: 'approved'});
+        // add to group_members
+        await membersCol.doc(u.uid).set({uid: u.uid, email: u.email, name: u.name || u.email.split('@')[0], joinedAt: firebase.firestore.FieldValue.serverTimestamp()});
+        alert('User approved.');
+      } catch (e) { console.error(e); alert('Error'); }
+    };
+    el.querySelector('.rejectBtn').onclick = async () => {
+      try {
+        await usersCol.doc(u.uid).update({status: 'rejected'});
+        alert('User rejected.');
+      } catch (e) { console.error(e); alert('Error'); }
+    };
+  });
+}
+
+/* ================================
+   Render Transactions (chat history)
+   ================================ */
+function renderTransactions(){
+  chatArea.innerHTML = '';
+  // Show in chronological (oldest first) by reversing transactions array before rendering
+  const ordered = [...transactions].reverse();
+  ordered.forEach(tx => {
+    // original user message
+    const userEl = document.createElement('div');
+    userEl.className = 'mb-3';
+    userEl.innerHTML = `
+      <div class="text-xs text-slate-400 mb-1">${tx.fromName || tx.fromEmail || 'Anonymous'} • ${tx.createdAt ? new Date(tx.createdAt.seconds*1000).toLocaleString() : ''}</div>
+      <div class="inline-block px-4 py-2 rounded-lg bg-slate-800 text-slate-100">${tx.rawText}</div>
+    `;
+    chatArea.appendChild(userEl);
+
+    // processed card if exists
+    if (tx.status === 'processed') {
+      const p = document.createElement('div');
+      p.className = 'mb-6 mt-2 p-3 rounded-lg border border-slate-800 bg-gradient-to-br from-slate-900 to-slate-950';
+      p.innerHTML = `
+        <div class="flex items-center justify-between mb-2">
+          <div class="flex items-center gap-2">
+            <div class="w-8 h-8 rounded-full bg-green-600 flex items-center justify-center text-white text-sm">✓</div>
+            <div>
+              <div class="font-semibold">${tx.parsed?.description || 'Expense'}</div>
+              <div class="text-xs text-slate-400">Payer: ${tx.parsed?.payer || 'Unknown'} • Amount: ${formatMoney(tx.parsed?.total_amount)}</div>
+            </div>
+          </div>
+        </div>
+        <div class="text-xs text-slate-300">
+          <b>Split:</b>
+          <div class="mt-2 space-y-1">
+            ${ (tx.parsed?.split_recipients || []).map(s => `<div class="flex justify-between"><div>${s.name}</div><div class="font-semibold">${formatMoney(s.owed)}</div></div>`).join('') }
+          </div>
+        </div>
+      `;
+      chatArea.appendChild(p);
+    } else if (tx.status === 'error') {
+      const e = document.createElement('div');
+      e.className = 'mb-6 mt-2 p-3 rounded-lg border border-rose-700 bg-[#2b0f10]';
+      e.innerHTML = `
+        <div class="flex items-center gap-3">
+          <div class="w-8 h-8 rounded-full bg-rose-600 flex items-center justify-center text-white text-sm">✕</div>
+          <div>
+            <div class="font-semibold">Parsing Error</div>
+            <div class="text-xs text-slate-400">${tx.errorMessage || 'Could not parse the input.'}</div>
+          </div>
+        </div>
+      `;
+      chatArea.appendChild(e);
+    } else {
+      // pending
+      const p = document.createElement('div');
+      p.className = 'mb-6 mt-2 p-3 rounded-lg border border-slate-700 bg-slate-900 text-slate-400';
+      p.innerHTML = `
+        <div class="flex items-center gap-3">
+          <div class="w-8 h-8 rounded-full bg-yellow-500 flex items-center justify-center text-black text-sm">…</div>
+          <div>
+            <div class="font-semibold">Processing</div>
+            <div class="text-xs text-slate-400">AI parsing in progress...</div>
+          </div>
+        </div>
+      `;
+      chatArea.appendChild(p);
+    }
+  });
+
+  // Scroll to bottom
+  chatArea.scrollTop = chatArea.scrollHeight;
+}
+
+/* ================================
+   Utilities
+   ================================ */
+function formatMoney(v){
+  if (v == null) return '--';
+  const n = Number(v);
+  if (isNaN(n)) return v;
+  return '$' + n.toFixed(2);
+}
+
+/* ================================
+   Send / Parse Input (AI integration)
+   ================================ */
+
+async function createTransactionRaw(rawText){
+  if (!auth.currentUser) return alert('Sign in first.');
+  // Save an initial transaction doc with status 'pending'
+  const docRef = await txCol.add({
+    fromUid: auth.currentUser.uid,
+    fromEmail: auth.currentUser.email,
+    fromName: currentUser?.name || auth.currentUser.email,
+    rawText,
+    status: 'pending',
+    createdAt: firebase.firestore.FieldValue.serverTimestamp()
+  });
+  return docRef.id;
+}
+
+// AI parse using OpenAI Responses endpoint (Gemini-style JSON forcing).
+// NOTE: For production deploy server-side to hide key. This function sends client-side.
+async function parseWithAI(rawText, txId) {
+  // Craft system + user prompt instructing JSON only output
+  const prompt = `
+You are an assistant who MUST parse a user's expense sentence into strict JSON only.
+Return exactly one JSON object with the following fields:
+{
+  "payer": "<payer name or email>", 
+  "total_amount": <number>, 
+  "description": "<short description>", 
+  "split_recipients": [
+     {"name":"<recipient name>", "owed": <number>}, ...
+  ]
+}
+Rules:
+- If 'split' words like "split with all" or "split for all" appear, split equally among all approved group members (including payer).
+- If recipients aren't named, default to 'all' meaning everyone in group_members.
+- Output numeric values (floats allowed) for amounts.
+- If you cannot parse, return a JSON with {"error": "<explain why>"}.
+Make the JSON compact and nothing else. Input: "${rawText.replaceAll('"','\\"')}"
+  `.trim();
+
+  try {
+    // Using OpenAI 'responses' endpoint
+    const res = await fetch('/api/parse', {
+  method: 'POST',
+  headers: {'Content-Type': 'application/json'},
+  body: JSON.stringify({ input: prompt })
+});
+
+    if (!res.ok) {
+      const t = await res.text();
+      throw new Error('AI request failed: ' + t);
+    }
+    const data = await res.json();
+
+    // OpenAI responses API returns structure; try extract text
+    let aiText = '';
+    if (data.output && Array.isArray(data.output) && data.output.length) {
+      // new Responses API might have content array
+      const out = data.output.find(o => o.type === 'message') || data.output[0];
+      if (out && out.content) {
+        if (typeof out.content === 'string') aiText = out.content;
+        else if (Array.isArray(out.content)) {
+          aiText = out.content.map(c => (c.text || '')).join('');
+        } else if (out.content[0] && out.content[0].text) aiText = out.content[0].text;
+      } else if (data.output_text) {
+        aiText = data.output_text;
+      }
+    } else if (data.choices && data.choices[0] && data.choices[0].message) {
+      aiText = data.choices[0].message.content;
+    } else if (data.output_text) {
+      aiText = data.output_text;
+    } else {
+      aiText = JSON.stringify(data);
+    }
+
+    // Trim and try parse JSON inside the aiText
+    const jsonStr = extractJSON(aiText);
+    if (!jsonStr) {
+      // Save error
+      await txCol.doc(txId).update({status: 'error', errorMessage: 'AI did not return JSON.', rawAI: aiText});
+      return {ok:false, error: 'AI did not return JSON.'};
+    }
+    const parsed = JSON.parse(jsonStr);
+
+    if (parsed.error) {
+      await txCol.doc(txId).update({status:'error', errorMessage: parsed.error, rawAI: aiText});
+      return {ok:false, error: parsed.error};
+    }
+
+    // If split recipients are "all" or empty - expand from groupMembers
+    let splitRecipients = parsed.split_recipients || [];
+    if (Array.isArray(splitRecipients) && splitRecipients.length === 1 && (splitRecipients[0].name || '').toLowerCase() === 'all') {
+      splitRecipients = groupMembers.map(m => ({name: m.name || m.email, uid: m.uid}));
+    }
+    if (!splitRecipients || splitRecipients.length === 0) {
+      // if not specified, default to payer only (payer pays all)
+      splitRecipients = [{name: parsed.payer || 'Unknown'}];
+    }
+
+    // If split_recipients don't include amounts, split equally
+    const amt = Number(parsed.total_amount) || 0;
+    let recipientsWithAmounts;
+    if (splitRecipients.every(r => typeof r.owed === 'number')) {
+      recipientsWithAmounts = splitRecipients;
+    } else {
+      const equal = +(amt / splitRecipients.length).toFixed(2);
+      // adjust rounding to ensure sum equals total
+      recipientsWithAmounts = splitRecipients.map((r, idx) => ({name: r.name || r, owed: equal}));
+      const sum = recipientsWithAmounts.reduce((s,r)=>s + (Number(r.owed)||0),0);
+      const diff = +(amt - sum).toFixed(2);
+      if (Math.abs(diff) >= 0.01) {
+        // adjust first recipient
+        recipientsWithAmounts[0].owed = +(recipientsWithAmounts[0].owed + diff).toFixed(2);
+      }
+    }
+
+    // Attach uids by matching names/emails loosely to groupMembers
+    recipientsWithAmounts = recipientsWithAmounts.map(r => {
+      const match = groupMembers.find(m => (m.email && m.email.toLowerCase() === (r.name||'').toLowerCase()) || (m.name && m.name.toLowerCase() === (r.name||'').toLowerCase()));
+      return {...r, uid: match ? match.uid : undefined};
+    });
+
+    // Update transaction doc to processed
+    await txCol.doc(txId).update({
+      status: 'processed',
+      parsed: {
+        payer: parsed.payer,
+        total_amount: Number(parsed.total_amount),
+        description: parsed.description || parsed.desc || '',
+        split_recipients: recipientsWithAmounts
+      },
+      rawAI: aiText,
+      processedAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+
+    return {ok:true};
+
+  } catch (err) {
+    console.error('parse error', err);
+    await txCol.doc(txId).update({status: 'error', errorMessage: (err.message || String(err))});
+    return {ok:false, error: err.message || String(err)};
+  }
+}
+
+// Helper: extract JSON object from text (first {...})
+function extractJSON(text){
+  if (!text) return null;
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  if (start === -1 || end === -1 || end < start) return null;
+  const sub = text.substring(start, end+1);
+  try { JSON.parse(sub); return sub; } catch (e) { return null; }
+}
+
+/* ================================
+   Debt Simplification Algorithm
+   ================================ */
+/*
+  Approach:
+  - For all processed transactions, compute net balance per member (positive = they are owed money).
+  - For each transaction: payer paid total_amount; each recipient owes their share.
+  - net[payer] += total_amount - sum(owed_by_payer_if_included); net[recipient] -= owed
+  - Then simplify: repeatedly match max creditor and max debtor to settle amounts.
+*/
+
+function computeNetBalances(){
+  const balance = {}; // uid/name -> number (positive = owed to them)
+  // init with all group members
+  groupMembers.forEach(m => balance[m.uid] = 0);
+
+  // loop processed transactions
+  transactions.filter(t => t.status === 'processed').forEach(t => {
+    const payerName = t.parsed.payer;
+    // try match payer uid
+    let payerUid = groupMembers.find(m => (m.email && m.email.toLowerCase() === (payerName||'').toLowerCase()) || (m.name && m.name.toLowerCase() === (payerName||'').toLowerCase()))?.uid;
+    if (!payerUid) {
+      // if fromUid exists, prefer that
+      payerUid = t.fromUid || null;
+    }
+    const payerKey = payerUid || ('payer:'+payerName);
+    if (!(payerKey in balance)) balance[payerKey] = 0;
+
+    const total = Number(t.parsed.total_amount) || 0;
+    // Add to payer account
+    balance[payerKey] += total;
+
+    // subtract recipients
+    (t.parsed.split_recipients || []).forEach(r => {
+      const uid = r.uid || ('recipient:'+r.name);
+      if (!(uid in balance)) balance[uid] = 0;
+      balance[uid] -= Number(r.owed) || 0;
+    });
+  });
+
+  // Map keys back to human names
+  const entries = Object.entries(balance).map(([k,v]) => {
+    const member = groupMembers.find(m=>m.uid===k);
+    return {key:k, name: member ? member.name : (k.startsWith('payer:') || k.startsWith('recipient:') ? k.split(':')[1] : (usersMap[k]?.name || usersMap[k]?.email || k)), uid: member ? member.uid : k, balance: +v};
+  });
+
+  return entries;
+}
+
+// Simplify debts -> returns array of payments {fromUid, toUid, amount, fromName, toName}
+function simplifyDebts(balances){
+  // make arrays of creditors and debtors
+  const creditors = balances.filter(b => b.balance > 0).map(b => ({...b}));
+  const debtors = balances.filter(b => b.balance < 0).map(b => ({...b, balance: -b.balance}));
+
+  const payments = [];
+  // sort descending creditors by balance, debtors by balance
+  creditors.sort((a,b)=>b.balance-a.balance);
+  debtors.sort((a,b)=>b.balance-a.balance);
+
+  let i = 0, j = 0;
+  while (i < creditors.length && j < debtors.length) {
+    const cred = creditors[i];
+    const debt = debtors[j];
+    const settle = Math.min(cred.balance, debt.balance);
+    if (settle <= 0.001) break;
+    payments.push({
+      fromUid: debt.uid, toUid: cred.uid,
+      amount: +settle.toFixed(2),
+      fromName: debt.name, toName: cred.name
+    });
+    cred.balance = +(cred.balance - settle).toFixed(2);
+    debt.balance = +(debt.balance - settle).toFixed(2);
+    if (cred.balance <= 0.001) i++;
+    if (debt.balance <= 0.001) j++;
+  }
+  return payments;
+}
+
+/* ================================
+   Render Balances Sidebar
+   ================================ */
+function renderBalances(){
+  balancesList.innerHTML = '';
+  if (!groupMembers || groupMembers.length === 0) {
+    balancesList.innerHTML = `<div class="text-xs text-slate-400">No approved members yet</div>`;
+    return;
+  }
+
+  const entries = computeNetBalances();
+  // prefer ordering by absolute value descending
+  const ordered = entries.sort((a,b)=>Math.abs(b.balance) - Math.abs(a.balance));
+
+  ordered.forEach(e => {
+    const row = document.createElement('div');
+    row.className = 'flex items-center justify-between p-2 rounded hover:bg-slate-900 cursor-pointer border border-transparent hover:border-slate-800';
+    row.innerHTML = `<div class="flex items-center gap-3">
+        <div class="w-9 h-9 rounded-full bg-gradient-to-br from-slate-700 to-slate-800 flex items-center justify-center text-xs">${(e.name||'U').slice(0,2).toUpperCase()}</div>
+        <div>
+          <div class="text-sm font-medium">${e.name}</div>
+          <div class="text-xs text-slate-400">${e.uid}</div>
+        </div>
+      </div>
+      <div class="text-right">
+        <div class="${e.balance >= 0 ? 'text-emerald-400 font-semibold' : 'text-rose-400 font-semibold'}">${formatMoney(e.balance)}</div>
+      </div>`;
+    balancesList.appendChild(row);
+
+    row.onclick = () => {
+      const balancesAll = computeNetBalances();
+      const payments = simplifyDebts(balancesAll);
+      // filter payments where this person is involved
+      const related = payments.filter(p => p.fromUid === e.uid || p.toUid === e.uid);
+      const body = document.getElementById('debtModalBody');
+      const title = document.getElementById('debtModalTitle');
+      title.innerText = `${e.name} — Balance ${formatMoney(e.balance)}`;
+      if (related.length === 0) {
+        body.innerHTML = `<div class="text-slate-400">No payments required for this member.</div>`;
+      } else {
+        body.innerHTML = related.map(p => {
+          if (p.toUid === e.uid) {
+            return `<div><span class="text-emerald-300">${p.fromName}</span> owes <b>${formatMoney(p.amount)}</b> to <span class="text-emerald-300">${p.toName}</span></div>`;
+          } else {
+            return `<div><span class="text-rose-300">${p.fromName}</span> pays <b>${formatMoney(p.amount)}</b> to <span class="text-rose-300">${p.toName}</span></div>`;
+          }
+        }).join('');
+      }
+      document.getElementById('debtModal').classList.remove('hidden');
+      document.getElementById('debtModal').classList.add('flex');
+    };
+  });
+}
+
+/* ================================
+   CSV Export
+   ================================ */
+exportCSV.onclick = async () => {
+  // get all processed transactions
+  const snap = await txCol.where('status','==','processed').get();
+  const rows = [];
+  snap.forEach(doc => {
+    const d = doc.data();
+    const parsed = d.parsed || {};
+    const recips = (parsed.split_recipients || []).map(r => `${r.name}:${r.owed}`).join('|');
+    rows.push([
+      doc.id,
+      d.fromEmail || '',
+      parsed.payer || '',
+      parsed.total_amount || '',
+      `"${parsed.description || ''}"`,
+      `"${recips}"`,
+      d.processedAt ? new Date(d.processedAt.seconds*1000).toISOString() : ''
+    ].join(','));
+  });
+  const header = ['id,fromEmail,payer,total_amount,description,split_recipients,processedAt'].join(',');
+  const csv = [header, ...rows].join('\n');
+  const blob = new Blob([csv], {type: 'text/csv;charset=utf-8;'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'processed_transactions.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+};
+
+/* ================================
+   Input UI events
+   ================================ */
+sendBtn.onclick = async () => {
+  await handleSend();
+};
+nlInput.addEventListener('keydown', async (e) => {
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+    await handleSend();
+  }
+});
+
+async function handleSend() {
+  if (!auth.currentUser) return alert('Sign in first.');
+  if (!currentUser || currentUser.status !== 'approved') {
+    return alert('Your account is not approved yet.');
+  }
+  const rawText = nlInput.value.trim();
+  if (!rawText) return;
+  // create a pending tx
+  const txId = await createTransactionRaw(rawText);
+  nlInput.value = '';
+  // start parsing (async but we update doc so listeners update view)
+  parseWithAI(rawText, txId);
+}
+
+/* Quick Split: a helpful utility to open quick input template */
+document.getElementById('quickSplitBtn').onclick = () => {
+  nlInput.value = 'Paid 1200 for groceries, split with all';
+  nlInput.focus();
+};
+
+/* Debt modal close */
+document.getElementById('closeDebtModal').onclick = () => {
+  document.getElementById('debtModal').classList.add('hidden');
+  document.getElementById('debtModal').classList.remove('flex');
+};
+document.getElementById('signOutPending').onclick = () => auth.signOut();
+
+/* ================================
+   Auth state observer
+   ================================ */
+auth.onAuthStateChanged(async user => {
+  if (!user) {
+    currentUser = null;
+    renderAuthUI();
+    // hide pending modal if visible
+    pendingModal.classList.add('hidden');
+    adminPanel.classList.add('hidden');
+    userInfo.innerHTML = '';
+    return;
+  }
+
+  // Load user document
+  const doc = await usersCol.doc(user.uid).get();
+  if (!doc.exists) {
+    // fallback create user doc as pending
+    const email = user.email || '';
+    const role = (email.toLowerCase() === 'admin@expense.com') ? 'admin' : 'member';
+    const status = (email.toLowerCase() === 'admin@expense.com') ? 'approved' : 'pending';
+    await usersCol.doc(user.uid).set({email, name: email.split('@')[0], role, status, createdAt: firebase.firestore.FieldValue.serverTimestamp()});
+    currentUser = {uid: user.uid, email, name: email.split('@')[0], role, status};
+  } else {
+    currentUser = {uid: user.uid, ...(doc.data())};
+  }
+
+  // Update UI
+  renderAuthUI();
+
+  // if status is pending -> show blocking modal
+  if (currentUser.status !== 'approved') {
+    pendingModal.classList.remove('hidden');
+    pendingModal.classList.add('flex');
+    // disable input
+    sendBtn.disabled = true;
+    nlInput.disabled = true;
+  } else {
+    pendingModal.classList.add('hidden');
+    sendBtn.disabled = false;
+    nlInput.disabled = false;
+  }
+
+  // admin panel visibility
+  if (currentUser.role === 'admin') {
+    adminPanel.classList.remove('hidden');
+  } else {
+    adminPanel.classList.add('hidden');
+  }
+
+  // Show current user info
+  userInfo.innerHTML = `<div><span class="font-medium">${currentUser.name || currentUser.email}</span> • <span class="text-slate-400">${currentUser.role}</span></div>
+    <div class="text-xs text-slate-400">Signed in as ${currentUser.email}</div>`;
+
+  // ensure if admin and approved it's in members
+  if (currentUser.role === 'admin' && currentUser.status === 'approved') {
+    await membersCol.doc(currentUser.uid).set({uid: currentUser.uid, email: currentUser.email, name: currentUser.name || currentUser.email.split('@')[0], joinedAt: firebase.firestore.FieldValue.serverTimestamp()});
+  }
+});
+
+/* ================================
+   Initial UI boot
+   ================================ */
+renderAuthUI();
+renderBalances();
+renderTransactions();
+
+</script>
+
 </body>
 </html>
